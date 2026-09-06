@@ -1,0 +1,23 @@
+modLoader="kotlinforforge"
+loaderVersion="[4,)"
+license="MIT"
+
+[[mods]]
+modId="samcnpc_core"
+version="${version}"
+displayName="SAMCNPC Core"
+description="Player-like NPC entity mechanisms and public API."
+
+[[dependencies.samcnpc_core]]
+modId="forge"
+mandatory=true
+versionRange="[47.4.21,48)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.samcnpc_core]]
+modId="kotlinforforge"
+mandatory=true
+versionRange="[4.12.0,5)"
+ordering="NONE"
+side="BOTH"
