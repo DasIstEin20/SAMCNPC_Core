@@ -34,6 +34,8 @@ przedmioty, które znajdą się bezpośrednio przy jego ciele.
   między ekwipunkiem i wskazanym kontenerem.
 - **Stan i integracje:** zapis encji i wyposażenia, kontrola uprawnień przywołującego gracza,
   uporządkowane wyniki akcji, zdarzenia oraz ograniczone obserwacje dostępne przez publiczne API.
+- **Przełączniki aktywności:** trwałe ustawienia animacji i dynamicznego ładowania chunków,
+  osobno dla NPC lub globalnie. NPC może działać i generować nowy teren bez gracza w pobliżu lub online.
 
 Core działa samodzielnie. Docelowy podział projektu to `samcnpc-llm -> samcnpc-behavior -> samcnpc-core`.
 Automatyczne podążanie, obrona, wybór zasobów czy zadanie drwala należą do Behavior.
@@ -97,6 +99,46 @@ otwieraj je, stojąc blisko NPC — maksymalnie 8 bloków.
 Cel musi spełniać warunki zasięgu i widoczności. Przed kopaniem przekaż NPC odpowiednie narzędzie;
 przed strzelaniem — broń i amunicję. Polecenia sterowania dotyczą wybranej postaci.
 
+## Animacje i dynamiczne ładowanie chunków
+
+```text
+/samcnpc animations Sam off
+/samcnpc animations Sam on
+/samcnpc animations all off
+/samcnpc animations all on
+/samcnpc chunkloading Sam on
+/samcnpc chunkloading Sam off
+/samcnpc chunkloading all on
+/samcnpc chunkloading all off
+```
+
+Te komendy dotyczą wskazanego NPC, niezależnie od wybranej postaci. Działają nazwy, UUID i
+jednoznaczne początki nazw/UUID; nazwy ze spacjami podawaj w cudzysłowie. Pominięcie `on`/`off`
+po nazwie pokazuje ustawienie. Przy powtarzających się nazwach użyj UUID. `all` wymaga uprawnień
+operatora poziomu 2; przywołujący może zarządzać własnymi zarejestrowanymi NPC, także
+niezaładowanymi i znajdującymi się w innym wymiarze.
+
+Obie funkcje są domyślnie **włączone**. `all` zmienia wszystkie zarejestrowane NPC i ustawienie
+domyślne dla nowych; późniejsza komenda dla jednego NPC nadpisuje jego ustawienie. Zapis
+przetrwa restart świata/serwera. NPC ze starszej wersji Core trafiają do rejestru przy pierwszym
+załadowaniu ich dotychczasowego chunka.
+
+`animations off` ustawia ciało i warstwy skina w neutralnej pozycji, również podczas chodzenia,
+kopania, walki i używania przedmiotów. Działania, obrażenia, pociski i postęp kopania nadal działają.
+NPC wciąż przemieszcza się po świecie — to nie jest pauza AI ani komenda zatrzymania postaci.
+
+`chunkloading on` utrzymuje wokół NPC **okno 3×3 tickujących chunków** i generuje brakujący teren
+w miarę podróży. Stare tickety są zwalniane po ruchu, zmianie wymiaru, śmierci, usunięciu lub `off`;
+loadery różnych NPC nie przeszkadzają sobie przy nakładaniu obszarów. Po restarcie NPC wraca
+z zapisanej pozycji bez odwiedzin gracza. Limity bezpieczeństwa: 64 włączone loadery NPC i 4096
+wpisów rejestru. `all on` przekraczające limit loaderów niczego nie zmienia i wyjaśnia przyczynę.
+Brak wymiaru lub zapisanej encji wyłącza jej loader z komunikatem w logu serwera. Generowanie
+terenu może obciążać serwer, zwłaszcza przy wielu NPC; aktywacje są kolejkowane małymi partiami.
+
+To zapewnia generowanie i tickowanie terenu, ale nie emuluje każdej reguły gracza: naturalnego
+spawnu mobów zależnego od obecności gracza, postępów ani innych sprawdzeń wymagających prawdziwego
+gracza. Kierunek podróży i zadania NPC nadal wybiera Behavior.
+
 ## API dla dodatków
 
 Punktem wejścia jest `CoreNpcApi.service(server)`. Usługa udostępnia uchwyty `NpcHandle`, a
@@ -121,12 +163,17 @@ Dodatek wybiera cel i interpretuje wynik akcji. Core wykonuje i waliduje mechani
 .\gradlew.bat test
 .\gradlew.bat runGameTestServer
 .\gradlew.bat runClientAnimationSmoke
+.\gradlew.bat runChunkSmokeSave runChunkSmokeLoad
 python tools/check_core_boundary.py
 ```
 
 `runClientAnimationSmoke` automatycznie tworzy osobny świat testowy i sprawdza animacje w prawdziwym
-kliencie: obie ręce, narzędzia, broń, tarczę i kucanie w modelach classic/slim. Klient zamyka się po
+kliencie: obie ręce, narzędzia, broń, tarczę, kucanie i chodzenie w modelach classic/slim, także
+wyłączenie i ponowne włączenie animacji (52 scenariusze). Klient zamyka się po
 zakończeniu, a brak poprawnego wyniku powoduje błąd zadania Gradle. Kod tego testu nie trafia do JAR-a.
+Test chunków uruchamia dwa osobne procesy serwera i używa izolowanego zapisu `run-chunk-smoke`,
+sprawdzając generowanie terenu, zapis NPC/ekwipunku i automatyczne tickowanie po restarcie bez graczy.
+Uruchom kolejno save i load; przed powtórzeniem pary zarchiwizuj poprzedni katalog `run-chunk-smoke`.
 Zwykły serwer uruchamiany przez `runServer` wymaga zaakceptowania EULA Minecrafta przez użytkownika.
 
 ## Stan projektu

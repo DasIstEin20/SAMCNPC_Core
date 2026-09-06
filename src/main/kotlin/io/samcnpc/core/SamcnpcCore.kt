@@ -2,6 +2,7 @@ package io.samcnpc.core
 
 import com.mojang.logging.LogUtils
 import io.samcnpc.core.command.SamcnpcCommands
+import io.samcnpc.core.activity.NpcActivityEvents
 import io.samcnpc.core.entity.ModEntities
 import io.samcnpc.core.entity.SamcnpcEntity
 import io.samcnpc.core.event.SummonerLifecycleEvents
@@ -11,6 +12,7 @@ import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent
 import net.minecraftforge.eventbus.api.IEventBus
 import net.minecraftforge.fml.common.Mod
+import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent
 import thedarkcolour.kotlinforforge.forge.MOD_BUS
 
 @Mod(SamcnpcCore.MOD_ID)
@@ -21,13 +23,19 @@ class SamcnpcCore {
         ModEntities.REGISTRY.register(modBus)
         ModMenus.REGISTRY.register(modBus)
         modBus.addListener(::registerAttributes)
+        modBus.addListener(::commonSetup)
         MinecraftForge.EVENT_BUS.register(SamcnpcCommands)
         MinecraftForge.EVENT_BUS.register(SummonerLifecycleEvents)
         MinecraftForge.EVENT_BUS.register(NpcDirectoryEvents)
+        MinecraftForge.EVENT_BUS.register(NpcActivityEvents)
     }
 
     private fun registerAttributes(event: EntityAttributeCreationEvent) {
         event.put(ModEntities.NPC.get(), SamcnpcEntity.createAttributes().build())
+    }
+
+    private fun commonSetup(event: FMLCommonSetupEvent) {
+        event.enqueueWork { NpcActivityEvents.registerTicketValidation() }
     }
 
     companion object {

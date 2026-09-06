@@ -45,6 +45,7 @@ import io.samcnpc.core.api.SummonerBinding
 import io.samcnpc.core.api.CoreNpcApi
 import io.samcnpc.core.SamcnpcCore
 import io.samcnpc.core.health.NpcHeartSettings
+import io.samcnpc.core.activity.NpcActivityEvents
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.ListTag
 import net.minecraft.network.syncher.EntityDataAccessor
@@ -162,6 +163,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         entityData.define(DATA_SKIN_REVISION, "")
         entityData.define(DATA_SELECTED_SLOT, 0.toByte())
         entityData.define(DATA_SWING_SEQUENCE, 0)
+        entityData.define(DATA_ANIMATIONS_ENABLED, true)
     }
 
     override fun onSyncedDataUpdated(key: EntityDataAccessor<*>) {
@@ -189,6 +191,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             val snapshot = snapshot()
             val server = (level() as? ServerLevel)?.server
             if (server != null) {
+                NpcActivityEvents.existing(server)?.updatePosition(this)
                 val handle = NpcHandle(uuid, name.string)
                 val runtime = CoreNpcApi.service(server).runtime(handle)
                 if (runtime != null) {
@@ -221,10 +224,18 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
                 gameTime = level().gameTime,
             )
             if (server != null) {
+                NpcActivityEvents.existing(server)?.removed(this, reason)
                 CoreNpcApi.unregister(this, server, state)
             }
             MinecraftForge.EVENT_BUS.post(NpcRemovedEvent(lifecycle))
         }
+    }
+
+    override fun onRemovedFromWorld() {
+        super.onRemovedFromWorld()
+        val server = (level() as? ServerLevel)?.server ?: return
+        // Forge invokes this for tracking/unload paths that bypass Entity.remove().
+        NpcActivityEvents.existing(server)?.leftWorld(this)
     }
 
     /**
@@ -2152,6 +2163,13 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     fun clientSkinRevision(): String = entityData.get(DATA_SKIN_REVISION)
     fun clientSelectedHotbarSlot(): Int = entityData.get(DATA_SELECTED_SLOT).toInt()
 
+    fun animationsEnabled(): Boolean = entityData.get(DATA_ANIMATIONS_ENABLED)
+
+    internal fun setAnimationsEnabled(enabled: Boolean) {
+        check(!level().isClientSide) { "Animation settings are server-authoritative" }
+        entityData.set(DATA_ANIMATIONS_ENABLED, enabled)
+    }
+
     override fun addAdditionalSaveData(tag: CompoundTag) {
         super.addAdditionalSaveData(tag)
         tag.putInt(KEY_DATA_VERSION, DATA_VERSION)
@@ -2334,6 +2352,8 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             SynchedEntityData.defineId(SamcnpcEntity::class.java, EntityDataSerializers.STRING)
         private val DATA_SELECTED_SLOT: EntityDataAccessor<Byte> =
             SynchedEntityData.defineId(SamcnpcEntity::class.java, EntityDataSerializers.BYTE)
+        private val DATA_ANIMATIONS_ENABLED: EntityDataAccessor<Boolean> =
+            SynchedEntityData.defineId(SamcnpcEntity::class.java, EntityDataSerializers.BOOLEAN)
         private val DATA_SWING_SEQUENCE: EntityDataAccessor<Int> =
             SynchedEntityData.defineId(SamcnpcEntity::class.java, EntityDataSerializers.INT)
 

@@ -65,10 +65,13 @@ object NpcAnimationClientSmoke {
         CROSSBOW(Items.CROSSBOW),
         TRIDENT(Items.TRIDENT),
         CROUCH(Items.AIR),
+        WALK(Items.AIR),
     }
 
-    private data class Scenario(val skin: PlayerSkinModel, val action: Action)
-    private val scenarios = PlayerSkinModel.entries.flatMap { skin -> Action.entries.map { Scenario(skin, it) } }
+    private data class Scenario(val skin: PlayerSkinModel, val action: Action, val animations: Boolean)
+    private val scenarios = PlayerSkinModel.entries.flatMap { skin ->
+        Action.entries.flatMap { action -> listOf(Scenario(skin, action, true), Scenario(skin, action, false)) }
+    }
     private data class Sample(val index: Int, val entityId: Int, val age: Int)
 
     // Only immutable samples cross the server/client thread boundary. Each side owns its state below.
@@ -94,6 +97,8 @@ object NpcAnimationClientSmoke {
         var sawPose = false
         var returnedToIdle = false
         var screenshotRequested = false
+        var frozenFrames = 0
+        var reenabledFrames = 0
     }
 
     @SubscribeEvent
@@ -112,7 +117,7 @@ object NpcAnimationClientSmoke {
             minecraft.options.pauseOnLostFocus = false
             minecraft.options.hideGui = true
             minecraft.options.renderDistance().set(4)
-            minecraft.options.simulationDistance().set(4)
+            minecraft.options.simulationDistance().set(6)
             val settings = LevelSettings("Animation smoke", GameType.CREATIVE, false, Difficulty.PEACEFUL,
                 true, GameRules(), WorldDataConfiguration.DEFAULT)
             minecraft.createWorldOpenFlows().createFreshLevel(
@@ -148,7 +153,7 @@ object NpcAnimationClientSmoke {
             meleeTarget?.discard()
             meleeTarget = null
             level.setBlockAndUpdate(blockPos, Blocks.AIR.defaultBlockState())
-            for (x in -2..4) for (z in -3..3) {
+            for (x in -2..4) for (z in -12..3) {
                 level.setBlockAndUpdate(BlockPos(x, 99, z), Blocks.STONE.defaultBlockState())
             }
             level.dayTime = 6000
@@ -169,10 +174,18 @@ object NpcAnimationClientSmoke {
             val slot = if (scenario.action.offhand) EquipmentSlot.OFFHAND else EquipmentSlot.MAINHAND
             npc.setItemSlot(slot, ItemStack(scenario.action.item))
             check(level.addFreshEntity(npc)) { "Could not spawn animation smoke NPC" }
+            // The real summoner may manage its NPC without operator permission.
+            val changed = server.commands.performPrefixedCommand(player.createCommandSourceStack().withPermission(0),
+                "samcnpc animations ${npc.uuid} ${if (scenario.animations) "on" else "off"}")
+            check(changed == 1 && npc.animationsEnabled() == scenario.animations) { "Summoner animation command failed" }
             serverNpc = npc
         }
         val npc = checkNotNull(serverNpc)
         val action = scenario.action
+        if (action == Action.WALK) {
+            // Keep the entire locomotion/idle phase in view, not just the initial position.
+            player.teleportTo(level, npc.x + 3.0, npc.y + 0.6, npc.z - 6.0, 26.565F, 12.0F)
+        }
         if (serverAge == 12) {
             when {
                 action.block != null -> {
@@ -189,19 +202,30 @@ object NpcAnimationClientSmoke {
                     check(npc.swinging) { "Melee fixture did not start its swing" }
                 }
                 action == Action.OFFHAND_SWING -> npc.swing(InteractionHand.OFF_HAND, true)
-                action != Action.CROUCH -> requireAccepted(npc.startItemUse(if (action.offhand) NpcHand.OFF else NpcHand.MAIN))
+                action != Action.CROUCH && action != Action.WALK -> requireAccepted(npc.startItemUse(if (action.offhand) NpcHand.OFF else NpcHand.MAIN))
             }
         }
         if (action == Action.CROUCH && serverAge in 12..32) {
             requireAccepted(npc.applyControl(NpcControlInput(0.0F, 0.0F, sneak = true)))
         }
+        if (action == Action.WALK && serverAge in 12..32) {
+            requireAccepted(npc.applyControl(NpcControlInput(0.5F, 0.0F)))
+        }
+        if (action == Action.WALK && serverAge == 32) check(npc.z < 0.0) { "Animation setting prevented locomotion" }
         if (serverAge == 36) {
             if (npc.snapshot().blockBreak != null) npc.abortBlockBreak()
             if (npc.isUsingItem) npc.cancelItemUse()
         }
+        if (!scenario.animations && serverAge == 40) {
+            check(server.commands.performPrefixedCommand(player.createCommandSourceStack().withPermission(0),
+                "samcnpc animations ${npc.uuid} on") == 1)
+        }
+        if (!scenario.animations && serverAge == 43) {
+            npc.swing(if (action.offhand) InteractionHand.OFF_HAND else InteractionHand.MAIN_HAND, true)
+        }
         sample = Sample(serverIndex, npc.id, serverAge)
         serverAge++
-        if (serverAge == 55) {
+        if (serverAge == 65) {
             serverAge = 0
             serverIndex++
             if (serverIndex == scenarios.size) sample = Sample(serverIndex, npc.id, 0)
@@ -231,6 +255,19 @@ object NpcAnimationClientSmoke {
             Action.TRIDENT -> HumanoidModel.ArmPose.THROW_SPEAR
             else -> null
         }
+        if (!scenario.animations && current.age in 8..35) {
+            check(!npc.animationsEnabled()) { "Animation-off flag did not synchronize" }
+            check(model.attackTime == 0.0F && !model.crouching && model.rightArmPose == HumanoidModel.ArmPose.EMPTY &&
+                model.leftArmPose == HumanoidModel.ArmPose.EMPTY) { "Disabled model retained an action pose" }
+            for (part in listOf(model.head, model.body, model.leftArm, model.rightArm, model.leftLeg, model.rightLeg,
+                model.hat, model.jacket, model.leftSleeve, model.rightSleeve, model.leftPants, model.rightPants)) {
+                check(part.xRot == 0.0F && part.yRot == 0.0F && part.zRot == 0.0F) { "Disabled model/layer still animated" }
+            }
+            stats.frozenFrames++
+        }
+        if (!scenario.animations && current.age in 43..52 && npc.animationsEnabled() && model.attackTime > 0.05F) {
+            stats.reenabledFrames++
+        }
         if (current.age in 12..35) {
             if (model.attackTime > 0.05F) {
                 stats.swingFrames++
@@ -241,13 +278,14 @@ object NpcAnimationClientSmoke {
             }
             if (expectedPose != null && npc.isUsingItem && pose == expectedPose && arm.xRot < -0.3F) stats.sawPose = true
             if (action == Action.CROUCH && npc.isShiftKeyDown && model.crouching && model.body.xRot > 0.4F) stats.sawPose = true
+            if (action == Action.WALK && kotlin.math.abs(model.rightLeg.xRot) > 0.1F) stats.sawPose = true
             val visiblyActive = model.attackTime > 0.25F || stats.sawPose
             if (visiblyActive && !stats.screenshotRequested) {
                 stats.screenshotRequested = true
-                pendingScreenshot = "${scenario.skin}-${action}.png"
+                pendingScreenshot = "${scenario.skin}-${action}-${scenario.animations}.png"
             }
         }
-        if (current.age >= 48 && !npc.swinging && model.attackTime == 0.0F && !npc.isUsingItem && !model.crouching) {
+        if (current.age >= 54 && !npc.swinging && model.attackTime == 0.0F && !npc.isUsingItem && !model.crouching) {
             stats.returnedToIdle = true
         }
     }
@@ -265,9 +303,11 @@ object NpcAnimationClientSmoke {
 
     private fun verifyFrames(scenario: Scenario) {
         val swing = scenario.action.block != null || scenario.action == Action.MELEE || scenario.action == Action.OFFHAND_SWING
-        val detail = "$scenario frames=${stats.frames} swingFrames=${stats.swingFrames} armRange=${stats.maxArm - stats.minArm} pose=${stats.sawPose} idle=${stats.returnedToIdle}"
+        val detail = "$scenario frames=${stats.frames} swingFrames=${stats.swingFrames} armRange=${stats.maxArm - stats.minArm} pose=${stats.sawPose} idle=${stats.returnedToIdle} frozen=${stats.frozenFrames} reenabled=${stats.reenabledFrames}"
         check(stats.frames > 0 && stats.returnedToIdle) { "No rendered/finished animation: $detail" }
-        if (swing) {
+        if (!scenario.animations) {
+            check(stats.frozenFrames >= 2 && stats.reenabledFrames >= 2) { "Model did not freeze and resume after commands: $detail" }
+        } else if (swing) {
             check(stats.swingFrames >= 2 && stats.maxArm - stats.minArm > 0.3F) { "Arm did not visibly swing: $detail" }
         } else {
             check(stats.sawPose) { "Use/crouch pose was not rendered: $detail" }

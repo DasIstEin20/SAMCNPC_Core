@@ -1,6 +1,7 @@
 package io.samcnpc.core.event
 
 import io.samcnpc.core.api.CoreNpcApi
+import io.samcnpc.core.activity.NpcActivityEvents
 import io.samcnpc.core.entity.SamcnpcEntity
 import net.minecraft.server.level.ServerLevel
 import net.minecraftforge.event.entity.EntityJoinLevelEvent
@@ -14,6 +15,7 @@ object NpcDirectoryEvents {
         val level = event.level as? ServerLevel ?: return
         val npc = event.entity as? SamcnpcEntity ?: return
         CoreNpcApi.register(npc, level.server)
+        NpcActivityEvents.runtime(level.server).register(npc)
     }
 
     @SubscribeEvent

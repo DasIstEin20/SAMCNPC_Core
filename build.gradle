@@ -66,6 +66,23 @@ minecraft {
         }
         server { args '--nogui' }
         gameTestServer {}
+        // ForgeGradle merges run configs by name: the base must sort before its children.
+        gameTestServerChunkSave {
+            taskName 'runChunkSmokeSave'
+            parent runs.gameTestServer
+            workingDirectory project.file('run-chunk-smoke')
+            property 'forge.enabledGameTestNamespaces', 'samcnpc_chunk_smoke'
+            property 'samcnpc.chunkSmokePhase', 'save'
+            mods { samcnpc_core { source sourceSets.test } }
+        }
+        gameTestServerChunkLoad {
+            taskName 'runChunkSmokeLoad'
+            parent runs.gameTestServer
+            workingDirectory project.file('run-chunk-smoke')
+            property 'forge.enabledGameTestNamespaces', 'samcnpc_chunk_smoke'
+            property 'samcnpc.chunkSmokePhase', 'load'
+            mods { samcnpc_core { source sourceSets.test } }
+        }
     }
 }
 
@@ -120,6 +137,32 @@ tasks.register('syncGameTestStructures', Copy) {
 
 tasks.matching { it.name == 'prepareRunGameTestServer' }.configureEach {
     dependsOn tasks.named('syncGameTestStructures')
+}
+
+tasks.register('syncChunkSmokeStructures', Copy) {
+    from layout.projectDirectory.dir('src/main/resources/gameteststructures')
+    into layout.projectDirectory.dir('run-chunk-smoke/gameteststructures')
+}
+
+tasks.matching { it.name in ['prepareRunChunkSmokeSave', 'prepareRunChunkSmokeLoad'] }.configureEach {
+    dependsOn tasks.named('syncChunkSmokeStructures')
+}
+
+['Save', 'Load'].each { phase ->
+    tasks.matching { it.name == "runChunkSmoke${phase}" }.configureEach {
+        def report = layout.projectDirectory.file("run-chunk-smoke/chunk-smoke-${phase.toLowerCase()}.txt").asFile
+        doFirst {
+            report.parentFile.mkdirs()
+            report.text = 'RUNNING\n'
+        }
+        doLast {
+            if (!report.text.startsWith('PASS ')) throw new GradleException("Chunk restart ${phase} smoke failed: ${report}")
+        }
+    }
+}
+
+tasks.matching { it.name == 'runChunkSmokeLoad' }.configureEach {
+    mustRunAfter tasks.matching { it.name == 'runChunkSmokeSave' }
 }
 
 // Test sources join the mod only for this run; the driver is never shipped in the mod JAR.

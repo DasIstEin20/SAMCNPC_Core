@@ -22,11 +22,11 @@ import java.util.concurrent.ConcurrentHashMap
 
 class SamcnpcRenderer(context: EntityRendererProvider.Context) : MobRenderer<SamcnpcEntity, PlayerModel<SamcnpcEntity>>(
     context,
-    PlayerModel(context.bakeLayer(ModelLayers.PLAYER), false),
+    NpcPlayerModel(context.bakeLayer(ModelLayers.PLAYER), false),
     0.5F,
 ) {
     private val classicModel = model
-    private val slimModel = PlayerModel<SamcnpcEntity>(context.bakeLayer(ModelLayers.PLAYER_SLIM), true)
+    private val slimModel = NpcPlayerModel(context.bakeLayer(ModelLayers.PLAYER_SLIM), true)
 
     init {
         addLayer(

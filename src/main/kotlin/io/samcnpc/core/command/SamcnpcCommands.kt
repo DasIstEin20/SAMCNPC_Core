@@ -57,6 +57,8 @@ object SamcnpcCommands {
                         ),
                 )
                 .then(Commands.literal("list").executes(::list))
+                .then(NpcActivityCommands.animations())
+                .then(NpcActivityCommands.chunkLoading())
                 .then(
                     Commands.literal("hearts")
                         .requires { it.hasPermission(2) }
