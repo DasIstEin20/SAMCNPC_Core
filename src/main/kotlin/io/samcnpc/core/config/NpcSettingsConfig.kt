@@ -36,6 +36,8 @@ internal object NpcSettingsConfig {
     val global = Scope()
     val world = Scope()
     private val generation = AtomicLong()
+    private var observedGlobal = emptyList<SettingChoice>()
+    private var observedWorld = emptyList<SettingChoice>()
     val revision: Long get() = generation.get()
 
     fun register() {
@@ -43,9 +45,11 @@ internal object NpcSettingsConfig {
         ModLoadingContext.get().registerConfig(ModConfig.Type.SERVER, world.spec, "samcnpc-core-world.toml")
     }
 
+    @Synchronized
     fun changed(event: ModConfigEvent) {
         val spec = event.config.getSpec<ForgeConfigSpec>()
-        if (spec === global.spec || spec === world.spec) generation.incrementAndGet()
+        if (spec !== global.spec && spec !== world.spec) return
+        recordRevision(event !is ModConfigEvent.Reloading)
     }
 
     fun forced(setting: NpcSetting): SettingChoice {
@@ -56,11 +60,23 @@ internal object NpcSettingsConfig {
     fun enabled(setting: NpcSetting, fallback: Boolean = setting.factoryDefault): Boolean =
         SettingChoice.resolve(global.choice(setting), world.choice(setting), fallback)
 
+    @Synchronized
     fun update(globalScope: Boolean, choices: List<SettingChoice>) {
         (if (globalScope) global else world).replace(choices)
-        generation.incrementAndGet()
+        recordRevision(false)
     }
 
+    @Synchronized
     fun snapshot(editable: Boolean, message: String = ""): NpcSettingsSnapshot =
         NpcSettingsSnapshot(global.choices(), world.choices(), revision, editable, message)
+
+    private fun recordRevision(lifecycleChange: Boolean) {
+        val nextGlobal = global.choices()
+        val nextWorld = world.choices()
+        // Forge's file watcher may report our own save several times after its acknowledgement.
+        // Only changed values invalidate a draft; loading/unloading still starts a new lifetime.
+        if (lifecycleChange || nextGlobal != observedGlobal || nextWorld != observedWorld) generation.incrementAndGet()
+        observedGlobal = nextGlobal
+        observedWorld = nextWorld
+    }
 }

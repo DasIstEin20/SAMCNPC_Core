@@ -26,6 +26,8 @@ import net.minecraft.world.item.Items
 import net.minecraft.world.level.block.Blocks
 import net.minecraftforge.gametest.GameTestHolder
 import net.minecraftforge.gametest.PrefixGameTestTemplate
+import net.minecraftforge.fml.config.ConfigTracker
+import net.minecraftforge.fml.event.config.ModConfigEvent
 import java.util.UUID
 
 @GameTestHolder(SamcnpcCore.MOD_ID)
@@ -78,6 +80,14 @@ object NpcSettingsGameTests {
         } finally {
             level.server.playerList.ops.remove(operator.gameProfile)
         }
+        val config = checkNotNull(ConfigTracker.INSTANCE.fileMap()["samcnpc-core-global.toml"])
+        val acknowledged = NpcSettingsConfig.revision
+        repeat(3) { NpcSettingsConfig.changed(ModConfigEvent.Reloading(config)) }
+        check(NpcSettingsConfig.revision == acknowledged) { "An unchanged self-save reload invalidated the acknowledged revision" }
+        NpcSettingsConfig.global.values.getValue(NpcSetting.TOOL_DURABILITY).set(SettingChoice.NO)
+        NpcSettingsConfig.changed(ModConfigEvent.Reloading(config))
+        check(NpcSettingsConfig.revision > acknowledged) { "An actual external value change did not invalidate old drafts" }
+        set(NpcSetting.TOOL_DURABILITY, SettingChoice.DEFAULT)
         level.setBlock(block, Blocks.OAK_LOG.defaultBlockState(), 3)
         check(npc.startBlockBreak(target).status == NpcActionStatus.REJECTED)
         set(NpcSetting.IGNORE_MISSING_TOOL, SettingChoice.YES)

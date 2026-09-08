@@ -70,6 +70,11 @@ object NpcConfigClientSmoke {
         age++
         if (mc.screen is AccessibilityOnboardingScreen && mc.overlay == null) mc.screen?.onClose()
         if (pendingScreenshot != null || mc.overlay != null) return
+        if ((phase == Phase.GLOBAL_SAVE || phase == Phase.WORLD_SAVE) && age > 20 && serverScreenReady() && buttons().last().active) {
+            check(NpcSettingsInbox.snapshot?.message == "samcnpc.config.saved") {
+                "Valid sequential GUI save rejected at $phase: ${NpcSettingsInbox.snapshot}"
+            }
+        }
         when (phase) {
             Phase.TITLE -> if (mc.screen is TitleScreen) {
                 mc.options.pauseOnLostFocus = false
