@@ -31,6 +31,10 @@ data class NpcSnapshot(
     val equipment: NpcEquipmentKnowledge = NpcEquipmentKnowledge.EMPTY,
     /** The real selected main-hand alias. Behavior may preserve it across temporary equipment swaps. */
     val selectedHotbarSlot: Int = 0,
+    /** Server configuration permits empty-hand block work when no suitable tool is carried. */
+    val ignoreMissingMiningTool: Boolean = false,
+    /** Server configuration requires an empty selected hand for block work. */
+    val bareHandsMiningOnly: Boolean = false,
 )
 
 data class NpcPosition(val x: Double, val y: Double, val z: Double)

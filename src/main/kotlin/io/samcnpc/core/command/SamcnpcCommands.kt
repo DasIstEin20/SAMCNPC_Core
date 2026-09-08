@@ -21,6 +21,9 @@ import io.samcnpc.core.admin.CoreNpcAdminApi
 import io.samcnpc.core.admin.NpcAdminItemStackRequest
 import io.samcnpc.core.entity.SamcnpcEntity
 import io.samcnpc.core.health.NpcHeartSettings
+import io.samcnpc.core.config.NpcSetting
+import io.samcnpc.core.config.NpcSettingsConfig
+import io.samcnpc.core.config.SettingChoice
 import io.samcnpc.core.inventory.NpcEquipmentMenuProvider
 import net.minecraft.ChatFormatting
 import net.minecraft.commands.CommandSourceStack
@@ -59,6 +62,7 @@ object SamcnpcCommands {
                 .then(Commands.literal("list").executes(::list))
                 .then(NpcActivityCommands.animations())
                 .then(NpcActivityCommands.chunkLoading())
+                .then(NpcEffectCommands.branch(event.buildContext))
                 .then(
                     Commands.literal("hearts")
                         .requires { it.hasPermission(2) }
@@ -370,7 +374,7 @@ object SamcnpcCommands {
     }
 
     private fun showHearts(context: CommandContext<CommandSourceStack>): Int {
-        val enabled = NpcHeartSettings.enabled(context.source.server)
+        val enabled = !NpcSettingsConfig.enabled(NpcSetting.IMMORTAL, !NpcHeartSettings.enabled(context.source.server))
         context.source.sendSuccess(
             { Component.literal("SAMCNPC hearts are globally ${if (enabled) "ON" else "OFF"}. NPCs ${if (enabled) "can take damage" else "are invulnerable"}.") },
             false,
@@ -379,6 +383,10 @@ object SamcnpcCommands {
     }
 
     private fun setHearts(context: CommandContext<CommandSourceStack>, enabled: Boolean): Int {
+        if (NpcSettingsConfig.forced(NpcSetting.IMMORTAL) != SettingChoice.DEFAULT) {
+            context.source.sendFailure(Component.literal("Infinite health is forced by Forge configuration. Select Default in Global/In world settings to use the hearts command."))
+            return 0
+        }
         val changed = NpcHeartSettings.setEnabled(context.source.server, enabled)
         val message = if (changed) {
             "SAMCNPC hearts globally ${if (enabled) "enabled" else "disabled"}."
@@ -855,7 +863,7 @@ object SamcnpcCommands {
         chosenNpcByPlayer.clear()
     }
 
-    private fun resolveVisibleNpc(context: CommandContext<CommandSourceStack>, player: ServerPlayer): SamcnpcEntity? {
+    internal fun resolveVisibleNpc(context: CommandContext<CommandSourceStack>, player: ServerPlayer): SamcnpcEntity? {
         val selector = StringArgumentType.getString(context, "npc")
         val nearby = nearbyNpcs(player)
         val exactUuid = nearby.firstOrNull { it.uuid.toString().equals(selector, ignoreCase = true) }
@@ -888,7 +896,7 @@ object SamcnpcCommands {
     private fun nearbyNpcs(player: ServerPlayer): List<SamcnpcEntity> =
         player.serverLevel().getEntitiesOfClass(SamcnpcEntity::class.java, AABB.ofSize(player.position(), SEARCH_RADIUS * 2, SEARCH_RADIUS * 2, SEARCH_RADIUS * 2))
 
-    private fun requirePlayer(context: CommandContext<CommandSourceStack>): ServerPlayer? = try {
+    internal fun requirePlayer(context: CommandContext<CommandSourceStack>): ServerPlayer? = try {
         context.source.playerOrException
     } catch (_: com.mojang.brigadier.exceptions.CommandSyntaxException) {
         context.source.sendFailure(Component.literal("This command must be run by a player."))
@@ -899,7 +907,7 @@ object SamcnpcCommands {
     private const val HOTBAR_SIZE = 9
     private const val SHORT_ID_LENGTH = 8
     private val chosenNpcByPlayer: MutableMap<UUID, UUID> = ConcurrentHashMap()
-    private val NPC_SUGGESTIONS = SuggestionProvider<CommandSourceStack> { context, builder ->
+    internal val NPC_SUGGESTIONS = SuggestionProvider<CommandSourceStack> { context, builder ->
         val player = context.source.entity as? ServerPlayer
         if (player != null) {
             nearbyNpcs(player)

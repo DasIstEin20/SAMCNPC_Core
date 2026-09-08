@@ -85,7 +85,7 @@ internal class NpcEntityWorldView(
         if (npc.distanceToSqr(blockPos.center) > MAX_BLOCK_OBSERVE_DISTANCE_SQR) {
             return null
         }
-        val container = npc.level().getBlockEntity(blockPos) as? Container ?: return null
+        val container = NpcBlockContainers.resolve(npc.level(), blockPos) ?: return null
         val observedSlots = (0 until minOf(container.containerSize, MAX_CONTAINER_OBSERVE_SLOTS)).map { slot ->
             val stack = container.getItem(slot)
             val knowledge = NpcItemClassifier.profile(stack)

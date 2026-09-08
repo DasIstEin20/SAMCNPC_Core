@@ -54,6 +54,12 @@ minecraft {
             }
         }
         client {}
+        clientConfigSmoke {
+            parent runs.client
+            workingDirectory project.file('run-config-smoke')
+            property 'samcnpc.configSmoke', 'true'
+            mods { samcnpc_core { source sourceSets.test } }
+        }
         clientAnimationSmoke {
             parent runs.client
             workingDirectory project.file('run-animation-smoke')
@@ -176,5 +182,16 @@ tasks.matching { it.name == 'runClientAnimationSmoke' }.configureEach {
         if (!report.exists() || !report.text.trim().endsWith('PASS')) {
             throw new GradleException("Client animation smoke did not pass. See ${report} and run-animation-smoke/logs/latest.log")
         }
+    }
+}
+
+tasks.matching { it.name == 'runClientConfigSmoke' }.configureEach {
+    def report = layout.projectDirectory.file('run-config-smoke/config-smoke-result.txt').asFile
+    doFirst {
+        report.parentFile.mkdirs()
+        report.text = 'RUNNING\n'
+    }
+    doLast {
+        if (!report.text.trim().endsWith('PASS')) throw new GradleException("Configuration client smoke failed: ${report}")
     }
 }

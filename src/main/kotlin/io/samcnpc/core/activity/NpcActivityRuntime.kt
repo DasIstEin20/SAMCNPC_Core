@@ -2,6 +2,9 @@ package io.samcnpc.core.activity
 
 import io.samcnpc.core.SamcnpcCore
 import io.samcnpc.core.entity.SamcnpcEntity
+import io.samcnpc.core.config.NpcSetting
+import io.samcnpc.core.config.NpcSettingsConfig
+import io.samcnpc.core.config.SettingChoice
 import net.minecraft.server.MinecraftServer
 import net.minecraft.core.registries.Registries
 import net.minecraft.resources.ResourceKey
@@ -20,8 +23,14 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
     private val awaitingEntity = mutableMapOf<UUID, Int>()
     private val leaving = mutableMapOf<UUID, SamcnpcEntity>()
     private var indexLimitReported = false
+    private var loaderLimitReported = false
+    private var settingsRevision = Long.MIN_VALUE
+    private val desiredLoaders = mutableSetOf<UUID>()
 
-    fun records(): List<NpcActivityRecord> = data.records()
+    fun records(): List<NpcActivityRecord> = data.records().map { record -> record.copy(
+        animations = NpcSettingsConfig.enabled(NpcSetting.ANIMATIONS, record.animations),
+        chunkLoading = record.uuid in desiredLoaders,
+    ) }
 
     fun register(npc: SamcnpcEntity) {
         val previous = data.record(npc.uuid)
@@ -32,7 +41,7 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
             npc.level().dimension().location(), position.x, position.z,
             previous?.animations ?: data.defaultAnimations, allowLoader,
         )
-        npc.setAnimationsEnabled(record.animations)
+        npc.setAnimationsEnabled(NpcSettingsConfig.enabled(NpcSetting.ANIMATIONS, record.animations))
         if (!data.put(record)) {
             if (!indexLimitReported) {
                 SamcnpcCore.LOGGER.error("SAMCNPC activity index is full ({} NPCs). New NPCs will not force chunks or support remote activity commands until entries are removed by dismissing NPCs.", NpcActivityData.MAX_RECORDS)
@@ -50,11 +59,13 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
         // old body; that path bypasses Entity.remove(). Drop its old-dimensional lease here.
         if (leases[npc.uuid]?.dimension != record.dimension) release(npc.uuid)
         // EntityJoinLevelEvent can run inside chunk promotion. Generating chunks there can deadlock.
-        if (record.chunkLoading) pending.add(npc.uuid)
+        reconcileSettings()
+        if (record.uuid in desiredLoaders) pending.add(npc.uuid)
     }
 
     fun restore() {
-        for (record in data.records()) if (record.chunkLoading) pending.add(record.uuid)
+        reconcileSettings()
+        pending.addAll(desiredLoaders)
     }
 
     fun updatePosition(npc: SamcnpcEntity) {
@@ -67,11 +78,13 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
             record.dimension == npc.level().dimension().location() && record.name == name && record.summoner == summoner
         ) return
         data.put(record.copy(chunkX = position.x, chunkZ = position.z, dimension = npc.level().dimension().location(), name = name, summoner = summoner))
-        if (record.chunkLoading) pending.add(npc.uuid)
+        if (record.uuid in desiredLoaders) pending.add(npc.uuid)
     }
 
     /** All commands are atomic with respect to the resource cap, including the global default. */
     fun set(feature: NpcActivityFeature, uuid: UUID?, enabled: Boolean): String? {
+        val option = if (feature == NpcActivityFeature.ANIMATIONS) NpcSetting.ANIMATIONS else NpcSetting.CHUNK_LOADING
+        if (NpcSettingsConfig.forced(option) != SettingChoice.DEFAULT) return "This setting is forced by Forge configuration. Select Default in Global/In world settings to use NPC commands."
         val targets = if (uuid == null) data.records() else listOf(data.record(uuid) ?: return "NPC is not registered.")
         if (feature == NpcActivityFeature.CHUNK_LOADING && enabled) {
             val newlyEnabled = targets.count { !it.chunkLoading }
@@ -81,15 +94,7 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
         }
         if (uuid == null) data.setAll(feature, enabled)
         else data.put(targets.single().withSetting(feature, enabled))
-        for (record in targets) {
-            if (feature == NpcActivityFeature.ANIMATIONS) loaded[record.uuid]?.setAnimationsEnabled(enabled)
-            else if (enabled) pending.add(record.uuid)
-            else {
-                pending.remove(record.uuid)
-                awaitingEntity.remove(record.uuid)
-                release(record.uuid)
-            }
-        }
+        reconcileSettings()
         return null
     }
 
@@ -101,10 +106,12 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
             awaitingEntity.remove(npc.uuid)
             release(npc.uuid)
             data.remove(npc.uuid)
+            desiredLoaders.remove(npc.uuid)
+            reconcileSettings()
         } else if (reason == Entity.RemovalReason.CHANGED_DIMENSION) {
             release(npc.uuid)
             pending.add(npc.uuid)
-        } else if (data.record(npc.uuid)?.chunkLoading == true) {
+        } else if (npc.uuid in desiredLoaders) {
             pending.add(npc.uuid)
         }
         // Ordinary unload keeps the durable position and loader intent. Server stop clears refs.
@@ -115,6 +122,7 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
     }
 
     fun tick() {
+        if (settingsRevision != NpcSettingsConfig.revision) reconcileSettings()
         // onRemovedFromWorld can precede async storage's final setRemoved(UNLOADED_TO_CHUNK),
         // or tracking can resume before unload completes. Only watch actual leave candidates.
         val leaves = leaving.iterator()
@@ -133,7 +141,7 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
             val uuid = pending.first()
             pending.remove(uuid)
             val record = data.record(uuid)
-            if (record != null && record.chunkLoading) acquire(record)
+            if (record != null && uuid in desiredLoaders) acquire(record)
         }
         val iterator = awaitingEntity.iterator()
         while (iterator.hasNext()) {
@@ -149,8 +157,29 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
             iterator.remove()
             release(uuid)
             data.put(record.copy(chunkLoading = false))
+            desiredLoaders.remove(uuid)
             SamcnpcCore.LOGGER.warn("Disabled stale chunk loader for NPC {} ({}): entity not found after 1200 ticks at {} [{}, {}]. Load its actual location and enable /samcnpc chunkloading {} on to retry.", record.name, uuid, record.dimension, record.chunkX, record.chunkZ, uuid)
         }
+    }
+
+    private fun reconcileSettings() {
+        settingsRevision = NpcSettingsConfig.revision
+        val records = data.records()
+        val requested = records.filter { NpcSettingsConfig.enabled(NpcSetting.CHUNK_LOADING, it.chunkLoading) }.sortedBy { it.uuid.toString() }
+        val next = requested.take(NpcActivityData.MAX_LOADERS).mapTo(mutableSetOf()) { it.uuid }
+        if (requested.size > NpcActivityData.MAX_LOADERS && !loaderLimitReported) {
+            SamcnpcCore.LOGGER.warn("NPC configuration requests {} chunk loaders; the existing limit is {}. The first UUIDs in stable order receive tickets.", requested.size, NpcActivityData.MAX_LOADERS)
+        }
+        loaderLimitReported = requested.size > NpcActivityData.MAX_LOADERS
+        for (uuid in desiredLoaders - next) {
+            pending.remove(uuid)
+            awaitingEntity.remove(uuid)
+            release(uuid)
+        }
+        pending.addAll(next - desiredLoaders)
+        desiredLoaders.clear()
+        desiredLoaders.addAll(next)
+        for (record in records) loaded[record.uuid]?.setAnimationsEnabled(NpcSettingsConfig.enabled(NpcSetting.ANIMATIONS, record.animations))
     }
 
     private fun acquire(record: NpcActivityRecord) {
@@ -158,6 +187,7 @@ internal class NpcActivityRuntime(private val server: MinecraftServer) {
         if (level == null) {
             release(record.uuid)
             data.put(record.copy(chunkLoading = false))
+            desiredLoaders.remove(record.uuid)
             SamcnpcCore.LOGGER.warn("Disabled chunk loader for NPC {} ({}): dimension {} is unavailable.", record.name, record.uuid, record.dimension)
             return
         }

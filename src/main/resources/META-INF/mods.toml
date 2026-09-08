@@ -6,6 +6,8 @@ license="MIT"
 modId="samcnpc_core"
 version="${version}"
 displayName="SAMCNPC Core"
+logoFile="assets/samcnpc_core/textures/gui/logo.png"
+logoBlur=false
 description="Player-like NPC entity mechanisms and public API."
 
 [[dependencies.samcnpc_core]]

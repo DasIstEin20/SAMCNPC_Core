@@ -4,6 +4,7 @@ build/
 run/
 run-animation-smoke/
 run-chunk-smoke/
+run-config-smoke/
 logs/
 crash-reports/
 backups/

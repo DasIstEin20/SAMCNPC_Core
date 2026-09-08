@@ -29,7 +29,8 @@ into direct contact with its body.
   ordinary trident throws are also supported.
 - **Tool use:** breaking a supplied block with progress, crack effects, and repeated axe,
   pickaxe, shovel, or hoe swings. Core selects a suitable tool from the NPC's inventory
-  for that block and refuses to use an unsuitable tool when the block requires one.
+  for that block. Strict tool requirements are the default; two optional hand-work modes
+  are available through Forge configuration.
 - **Items and the world:** starting, continuing, releasing, and canceling item use in either hand;
   shields, supported item interactions, block placement, doors/buttons/levers, and transfers
   between the NPC's inventory and a supplied container.
@@ -37,6 +38,10 @@ into direct contact with its body.
   structured action results, events, and bounded observations through a public API.
 - **Activity controls:** persistent per-NPC/global animation switches and dynamic chunk loading.
   NPCs can keep working and generate new terrain without a nearby or connected player.
+- **Forge configuration:** global and per-save Yes/No/Default settings, including hostile
+  targeting, immortality, durability and two hand-work modes. The Mods list displays the logo.
+- **Vanilla effects and containers:** named-NPC effect commands and consistent access to
+  both halves of ordinary/trapped double chests, including blocked-lid checks.
 
 Core works on its own. The intended project structure is `samcnpc-llm -> samcnpc-behavior -> samcnpc-core`.
 Automatic following, defense, resource selection, and lumberjack tasks belong to Behavior.
@@ -138,6 +143,57 @@ This supplies terrain generation and ticking, not every player-only rule: natura
 eligibility, advancements and other checks explicitly requiring a real player are not emulated.
 Behavior still decides where the NPC travels and what it does.
 
+## Forge configuration
+
+Open **Mods → SAMCNPC Core → Config**. **Global settings** applies across saves;
+**In world settings** applies only to the current save. Every stored option starts at Default.
+Global Yes/No forces that value and locks the corresponding world row. Global Default
+delegates to the world's Yes/No/Default choice. Both Default use the built-in fallback.
+Press **Apply** before switching tabs or closing; uncommitted edits are discarded.
+
+| Option | Built-in fallback |
+| --- | --- |
+| Hostile mobs target NPCs | No |
+| Chunk loading | Yes |
+| Animations | Yes |
+| Infinite health | No |
+| Tool durability | Yes |
+| Ignore missing tool | No |
+| Bare hands only | No |
+
+Both Default preserve existing per-NPC animation/chunk-loading commands and the world's
+hearts setting. Forced GUI settings lock those equivalent commands; return both scopes to
+Default to use them again. The 64-loader limit still applies when forcing chunk loading on.
+
+**Ignore missing tool** selects a suitable carried tool when available and uses an empty
+hand otherwise. **Bare hands only** always uses an empty hand for block work and takes
+precedence. The held stack is preserved in a real free inventory slot. Both modes obey
+vanilla mining speed and harvest requirements: stone broken by hand yields no cobblestone.
+Tool durability No preserves tools/weapons during mining and attacks; it does not supply
+ammunition, consumables or building blocks. Hostiles No clears NPC targets without blocking
+incidental damage. Neutral mobs are not made aggressive by enabling hostile targeting.
+
+Global settings live in `config/samcnpc-core-global.toml`; world settings live in
+`<save>/serverconfig/samcnpc-core-world.toml`. In-world edits are acknowledged by the server
+and require the integrated host or an operator. A multiplayer client's local global config
+does not override the server. Changes affect loaded NPCs without restarting the world.
+
+## Vanilla effects
+
+```text
+/samcnpc effects Sam glowing infinite
+/samcnpc effects Sam speed 60 1 true
+/samcnpc effects Sam
+/samcnpc effects Sam clear glowing
+/samcnpc effects Sam clear
+```
+
+All registered vanilla effect IDs have tab completion. Syntax:
+`/samcnpc effects <npc> <effect> [seconds|infinite] [amplifier] [hideParticles]`.
+Defaults are 30 seconds and amplifier 0 (level I). The summoner or an operator may apply
+effects to a nearby loaded NPC by name or UUID. Vanilla handles timing, attributes, instant
+effects, synchronization and save/load; infinite glow persists until cleared.
+
 ## API for add-ons
 
 The entry point is `CoreNpcApi.service(server)`. The service provides `NpcHandle` references;
@@ -163,6 +219,7 @@ the mechanics on the server thread.
 .\gradlew.bat test
 .\gradlew.bat runGameTestServer
 .\gradlew.bat runClientAnimationSmoke
+.\gradlew.bat runClientConfigSmoke
 .\gradlew.bat runChunkSmokeSave runChunkSmokeLoad
 python tools/check_core_boundary.py
 ```
@@ -172,6 +229,10 @@ client: both hands, tools, weapons, shields, crouching and walking with classic/
 including animation off and re-enabling it (52 scenarios). The client closes
 when finished, and a missing or unsuccessful result fails the Gradle task. The test code is not
 included in the shipped JAR.
+`runClientConfigSmoke` exercises the real Forge config screen, server acknowledgements,
+client entity synchronization, two independent saves and reload. It uses `run-config-smoke/`
+and fails if its result is missing. Core's 25 dedicated GameTests include double chests,
+all 33 vanilla effects, tool modes, durability, hostile targeting and real chunk tickets.
 The chunk smoke uses two separate server JVMs and an isolated `run-chunk-smoke` save to verify
 terrain generation, NPC/inventory persistence and automatic ticking after restart, with zero players.
 Run save then load; archive the previous `run-chunk-smoke` directory before repeating the pair.

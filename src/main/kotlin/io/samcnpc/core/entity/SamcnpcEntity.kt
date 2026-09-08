@@ -44,6 +44,9 @@ import io.samcnpc.core.api.SkinBinding
 import io.samcnpc.core.api.SummonerBinding
 import io.samcnpc.core.api.CoreNpcApi
 import io.samcnpc.core.SamcnpcCore
+import io.samcnpc.core.config.NpcSetting
+import io.samcnpc.core.config.NpcSettingsConfig
+import io.samcnpc.core.config.NpcToolDurability
 import io.samcnpc.core.health.NpcHeartSettings
 import io.samcnpc.core.activity.NpcActivityEvents
 import net.minecraft.nbt.CompoundTag
@@ -178,6 +181,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
 
     override fun tick() {
         if (!level().isClientSide) {
+            if (isAlive && NpcSettingsConfig.enabled(NpcSetting.IMMORTAL)) health = maxHealth
             expireControlIfNeeded()
             applyControlInput()
         }
@@ -263,7 +267,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
 
     override fun hurt(source: net.minecraft.world.damagesource.DamageSource, amount: Float): Boolean {
         val serverLevel = level() as? ServerLevel
-        if (serverLevel != null && !NpcHeartSettings.enabled(serverLevel.server)) {
+        if (serverLevel != null && NpcSettingsConfig.enabled(NpcSetting.IMMORTAL, !NpcHeartSettings.enabled(serverLevel.server))) {
             return false
         }
         val accepted = super.hurt(source, amount)
@@ -369,6 +373,8 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             rangedAttack = rangedAttackState(),
             equipment = equipmentKnowledge(),
             selectedHotbarSlot = selectedHotbarSlot,
+            ignoreMissingMiningTool = NpcSettingsConfig.enabled(NpcSetting.IGNORE_MISSING_TOOL),
+            bareHandsMiningOnly = NpcSettingsConfig.enabled(NpcSetting.BARE_HANDS_ONLY),
         )
     }
 
@@ -1651,14 +1657,15 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
 
     private fun completeBlockBreak(action: ActiveBlockBreak, state: BlockState, tool: ItemStack) {
         val serverLevel = level() as? ServerLevel
-        if (serverLevel == null || !serverLevel.destroyBlock(action.position, true, this)) {
+        val canHarvest = NpcMiningSpeed.canHarvest(state.requiresCorrectToolForDrops(), tool.isCorrectToolForDrops(state))
+        if (serverLevel == null || !serverLevel.destroyBlock(action.position, canHarvest, this)) {
             clearBlockBreak(
                 action,
                 NpcActionResult.failed("world rejected block break", NpcActionCode.WORLD_REJECTED, action.actionId, NpcActionChannel.BLOCK_ACTION),
             )
             return
         }
-        if (!tool.isEmpty && tool.item.mineBlock(tool, serverLevel, state, action.position, this)) {
+        if (!tool.isEmpty && NpcToolDurability.perform(tool) { tool.item.mineBlock(tool, serverLevel, state, action.position, this) }) {
             // Item.mineBlock owns durability for vanilla tools. Calling hurtAndBreak here as well
             // double-damaged tools after every successful block break.
             refreshMainHandAttributes()
@@ -1707,10 +1714,11 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
 
     /**
      * Select the fastest carried tool for this exact supplied block. This does not choose a task or
-     * resource; it only prevents Core from starting absurd hand-mining when Minecraft tags say a
-     * pickaxe/axe/shovel/hoe is the intended mechanical tool.
+     * resource. Strict tool requirements remain the default; the two explicit configuration
+     * exceptions permit ordinary hand mining without changing the caller's supplied target.
      */
     private fun prepareMiningTool(state: BlockState): NpcActionResult? {
+        if (NpcSettingsConfig.enabled(NpcSetting.BARE_HANDS_ONLY)) return prepareEmptyMiningHand()
         val requiresCorrect = state.requiresCorrectToolForDrops()
         val requiresEffective = requiresEffectiveMiningTool(state)
         val candidates = inventory.indices.mapNotNull { slot ->
@@ -1728,6 +1736,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         }
         val chosen = NpcMiningToolSelector.choose(candidates, requiresCorrect, requiresEffective)
         if (chosen == null) {
+            if (NpcSettingsConfig.enabled(NpcSetting.IGNORE_MISSING_TOOL)) return prepareEmptyMiningHand()
             return if (requiresEffective) {
                 NpcActionResult.rejected(
                     "NPC carries no suitable tool for ${state.block.descriptionId}",
@@ -1748,6 +1757,9 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     private fun validateHeldMiningTool(state: BlockState, tool: ItemStack): NpcActionResult? {
+        val bareHands = NpcSettingsConfig.enabled(NpcSetting.BARE_HANDS_ONLY)
+        if (tool.isEmpty && (bareHands || NpcSettingsConfig.enabled(NpcSetting.IGNORE_MISSING_TOOL))) return null
+        if (bareHands) return NpcActionResult.rejected("bare-hands block work requires an empty selected hand", NpcActionCode.UNSUITABLE_TOOL)
         val requiresCorrect = state.requiresCorrectToolForDrops()
         if (requiresCorrect && (tool.isEmpty || !tool.isCorrectToolForDrops(state))) {
             return NpcActionResult.rejected(
@@ -1796,7 +1808,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         if (distanceToSqr(blockPos.center) > BLOCK_INTERACTION_REACH_SQR) {
             return null
         }
-        return level().getBlockEntity(blockPos) as? Container
+        return NpcBlockContainers.resolve(level(), blockPos)
     }
 
     private fun publishBlockBreakProgress(position: BlockPos, stage: Int) {
@@ -1829,7 +1841,21 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         return NpcAttackTiming.strength(elapsed, getAttributeValue(Attributes.ATTACK_SPEED))
     }
 
+    private fun prepareEmptyMiningHand(): NpcActionResult? {
+        if (mainHandItem.isEmpty) return null
+        val empty = inventory.indexOfFirst { it.isEmpty }
+        if (empty < 0) return NpcActionResult.rejected("free one inventory slot before empty-hand block work; the held item must be preserved", NpcActionCode.MISSING_RESOURCE)
+        inventory[empty] = inventory[selectedHotbarSlot]
+        inventory[selectedHotbarSlot] = ItemStack.EMPTY
+        refreshMainHandAttributes()
+        return null
+    }
+
     private fun damageMainHandAfterAttack(stack: ItemStack, target: LivingEntity) {
+        NpcToolDurability.perform(stack) { damageMainHandNormally(stack, target) }
+    }
+
+    private fun damageMainHandNormally(stack: ItemStack, target: LivingEntity) {
         if (!stack.item.hurtEnemy(stack, target, this)) {
             return
         }
@@ -1878,7 +1904,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             consumeArrowAmmunition(ammo)
         }
         val equipmentSlot = if (hand == InteractionHand.MAIN_HAND) EquipmentSlot.MAINHAND else EquipmentSlot.OFFHAND
-        bow.hurtAndBreak(1, this) { attacker -> attacker.broadcastBreakEvent(equipmentSlot) }
+        NpcToolDurability.perform(bow) { bow.hurtAndBreak(1, this) { attacker -> attacker.broadcastBreakEvent(equipmentSlot) } }
         if (hand == InteractionHand.MAIN_HAND) {
             refreshMainHandAttributes()
         }
@@ -1889,8 +1915,10 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     /** A release loads one reserve arrow; the next release fires CrossbowItem's charged NBT. */
     private fun releaseCrossbow(crossbow: ItemStack, useTicks: Int, hand: InteractionHand): NpcActionResult {
         if (CrossbowItem.isCharged(crossbow)) {
-            CrossbowItem.performShooting(level(), this, hand, crossbow, CROSSBOW_PROJECTILE_SPEED, CROSSBOW_INACCURACY)
-            crossbow.hurtAndBreak(1, this) { attacker -> attacker.broadcastBreakEvent(hand.equipmentSlot()) }
+            NpcToolDurability.perform(crossbow) {
+                CrossbowItem.performShooting(level(), this, hand, crossbow, CROSSBOW_PROJECTILE_SPEED, CROSSBOW_INACCURACY)
+                crossbow.hurtAndBreak(1, this) { attacker -> attacker.broadcastBreakEvent(hand.equipmentSlot()) }
+            }
             if (hand == InteractionHand.MAIN_HAND) {
                 refreshMainHandAttributes()
             }

@@ -28,7 +28,8 @@ przedmioty, które znajdą się bezpośrednio przy jego ciele.
   odrzut, zużycie oraz animacja zamachu. Obsługiwane są też łuk, kusza i zwykły rzut trójzębem.
 - **Praca narzędziami:** niszczenie wskazanego bloku z postępem, pęknięciami i powtarzanymi
   zamachami siekiery, kilofa, łopaty lub motyki. Core dobiera odpowiednie posiadane narzędzie
-  dla tego bloku i odmawia pracy niewłaściwym narzędziem, gdy jest ono wymagane.
+  dla tego bloku. Domyślnie wymaga właściwego narzędzia; konfiguracja Forge pozwala włączyć
+  dwa warianty pracy ręką.
 - **Przedmioty i świat:** rozpoczęcie, kontynuacja, zwolnienie i anulowanie użycia ręki;
   tarcza, wybrane użycia przedmiotów, stawianie bloków, drzwi/przyciski/dźwignie oraz transfery
   między ekwipunkiem i wskazanym kontenerem.
@@ -36,6 +37,10 @@ przedmioty, które znajdą się bezpośrednio przy jego ciele.
   uporządkowane wyniki akcji, zdarzenia oraz ograniczone obserwacje dostępne przez publiczne API.
 - **Przełączniki aktywności:** trwałe ustawienia animacji i dynamicznego ładowania chunków,
   osobno dla NPC lub globalnie. NPC może działać i generować nowy teren bez gracza w pobliżu lub online.
+- **Konfiguracja Forge:** globalne ustawienia Yes/No/Default i ustawienia każdego zapisu,
+  m.in. wrogość mobów, nieśmiertelność, zużywanie narzędzi i praca ręką. Logo jest na liście modów.
+- **Efekty i skrzynki:** komendy efektów vanilli oraz poprawny dostęp do obu połówek zwykłych
+  i pułapkowych podwójnych skrzynek, z uwzględnieniem zablokowanej pokrywy.
 
 Core działa samodzielnie. Docelowy podział projektu to `samcnpc-llm -> samcnpc-behavior -> samcnpc-core`.
 Automatyczne podążanie, obrona, wybór zasobów czy zadanie drwala należą do Behavior.
@@ -139,6 +144,57 @@ To zapewnia generowanie i tickowanie terenu, ale nie emuluje każdej reguły gra
 spawnu mobów zależnego od obecności gracza, postępów ani innych sprawdzeń wymagających prawdziwego
 gracza. Kierunek podróży i zadania NPC nadal wybiera Behavior.
 
+## Konfiguracja Forge
+
+Otwórz **Mody → SAMCNPC Core → Config**. **Global settings** dotyczy wszystkich zapisów,
+a **In world settings** tylko bieżącego świata. Wszystkie opcje zaczynają od Default.
+Globalne Yes/No wymusza wartość i blokuje odpowiadający wiersz świata. Globalne Default
+przekazuje decyzję ustawieniom świata. Default w obu zakładkach używa wartości domyślnej.
+Kliknij **Zastosuj** przed zmianą zakładki lub zamknięciem; niezapisane zmiany są odrzucane.
+
+| Opcja | Wartość domyślna |
+| --- | --- |
+| Wrogie moby atakują NPC | No |
+| Chunk loading | Yes |
+| Animacje | Yes |
+| Nieśmiertelność | No |
+| Zużywanie narzędzi | Yes |
+| Ignore missing tool | No |
+| Praca wyłącznie ręką | No |
+
+Default w obu zakładkach zachowuje wcześniejsze komendy animacji/chunków poszczególnych
+NPC i ustawienie hearts świata. Wymuszona wartość GUI blokuje odpowiednie komendy;
+przywróć Default w obu miejscach, aby ponownie z nich korzystać. Limit 64 loaderów nadal działa.
+
+**Ignore missing tool** dobiera posiadane narzędzie, a gdy go brakuje, pozwala pracować
+pustą ręką. **Praca wyłącznie ręką** zawsze wymusza pustą rękę podczas kopania i ma pierwszeństwo.
+Trzymany przedmiot trafia do rzeczywistego wolnego slotu. Oba tryby zachowują prędkość i zasady
+dropu vanilli: kamień rozbity ręką nie daje bruku. Wyłączenie zużywania narzędzi chroni narzędzia
+i broń podczas pracy oraz ataków; nie dostarcza amunicji, przedmiotów zużywalnych ani bloków.
+Wyłączenie wrogości usuwa cele NPC, lecz nie chroni przed przypadkowymi obrażeniami.
+Włączenie tej opcji nie czyni neutralnych mobów agresywnymi.
+
+Ustawienia globalne są w `config/samcnpc-core-global.toml`, a świata w
+`<zapis>/serverconfig/samcnpc-core-world.toml`. Zmiany podczas gry potwierdza serwer;
+może je zapisać host świata lub operator. Lokalna konfiguracja klienta nie nadpisuje serwera
+multiplayer. Zmiany działają na obecne NPC bez ponownego uruchamiania świata.
+
+## Efekty vanilli
+
+```text
+/samcnpc effects Sam glowing infinite
+/samcnpc effects Sam speed 60 1 true
+/samcnpc effects Sam
+/samcnpc effects Sam clear glowing
+/samcnpc effects Sam clear
+```
+
+Efekty mają podpowiedzi pod Tab. Składnia:
+`/samcnpc effects <npc> <efekt> [sekundy|infinite] [wzmacniacz] [ukryjCząsteczki]`.
+Domyślnie efekt trwa 30 sekund i ma poziom I (wzmacniacz 0). Przywołujący gracz lub operator
+może wybrać pobliskiego załadowanego NPC po nazwie lub UUID. Vanilla obsługuje czas, atrybuty,
+efekty natychmiastowe, synchronizację i zapis; nieskończone glow pozostaje do usunięcia komendą.
+
 ## API dla dodatków
 
 Punktem wejścia jest `CoreNpcApi.service(server)`. Usługa udostępnia uchwyty `NpcHandle`, a
@@ -163,6 +219,7 @@ Dodatek wybiera cel i interpretuje wynik akcji. Core wykonuje i waliduje mechani
 .\gradlew.bat test
 .\gradlew.bat runGameTestServer
 .\gradlew.bat runClientAnimationSmoke
+.\gradlew.bat runClientConfigSmoke
 .\gradlew.bat runChunkSmokeSave runChunkSmokeLoad
 python tools/check_core_boundary.py
 ```
@@ -171,6 +228,10 @@ python tools/check_core_boundary.py
 kliencie: obie ręce, narzędzia, broń, tarczę, kucanie i chodzenie w modelach classic/slim, także
 wyłączenie i ponowne włączenie animacji (52 scenariusze). Klient zamyka się po
 zakończeniu, a brak poprawnego wyniku powoduje błąd zadania Gradle. Kod tego testu nie trafia do JAR-a.
+`runClientConfigSmoke` sprawdza prawdziwy ekran Forge, potwierdzenia serwera, synchronizację
+postaci, niezależność dwóch zapisów i ponowne wczytanie. Używa katalogu `run-config-smoke/`.
+25 serwerowych GameTestów Core obejmuje m.in. podwójne skrzynki, wszystkie 33 efekty vanilli,
+pracę ręką, zużywanie narzędzi, wrogość mobów i rzeczywiste tickety chunków.
 Test chunków uruchamia dwa osobne procesy serwera i używa izolowanego zapisu `run-chunk-smoke`,
 sprawdzając generowanie terenu, zapis NPC/ekwipunku i automatyczne tickowanie po restarcie bez graczy.
 Uruchom kolejno save i load; przed powtórzeniem pary zarchiwizuj poprzedni katalog `run-chunk-smoke`.

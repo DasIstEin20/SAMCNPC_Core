@@ -3,6 +3,9 @@ package io.samcnpc.core
 import com.mojang.logging.LogUtils
 import io.samcnpc.core.command.SamcnpcCommands
 import io.samcnpc.core.activity.NpcActivityEvents
+import io.samcnpc.core.config.NpcSettingsConfig
+import io.samcnpc.core.config.NpcSettingsNetwork
+import io.samcnpc.core.config.NpcHostileTargeting
 import io.samcnpc.core.entity.ModEntities
 import io.samcnpc.core.entity.SamcnpcEntity
 import io.samcnpc.core.event.SummonerLifecycleEvents
@@ -20,6 +23,9 @@ class SamcnpcCore {
     init {
         // kotlinforforge installs its own loading context; the Java FML context cannot be cast here.
         val modBus: IEventBus = MOD_BUS
+        NpcSettingsConfig.register()
+        NpcSettingsNetwork.register()
+        modBus.addListener(NpcSettingsConfig::changed)
         ModEntities.REGISTRY.register(modBus)
         ModMenus.REGISTRY.register(modBus)
         modBus.addListener(::registerAttributes)
@@ -28,6 +34,7 @@ class SamcnpcCore {
         MinecraftForge.EVENT_BUS.register(SummonerLifecycleEvents)
         MinecraftForge.EVENT_BUS.register(NpcDirectoryEvents)
         MinecraftForge.EVENT_BUS.register(NpcActivityEvents)
+        MinecraftForge.EVENT_BUS.register(NpcHostileTargeting)
     }
 
     private fun registerAttributes(event: EntityAttributeCreationEvent) {
