@@ -1,5 +1,6 @@
 package io.samcnpc.core.client
 
+import com.mojang.authlib.GameProfile
 import com.mojang.logging.LogUtils
 import io.samcnpc.core.SamcnpcCore
 import io.samcnpc.core.api.NpcActionResult
@@ -9,9 +10,13 @@ import io.samcnpc.core.api.NpcControlInput
 import io.samcnpc.core.api.NpcHand
 import io.samcnpc.core.api.PlayerSkinModel
 import io.samcnpc.core.entity.ModEntities
+import io.samcnpc.core.entity.NpcThrownTridentEntity
+import net.minecraft.client.renderer.entity.ThrownTridentRenderer
+import net.minecraftforge.event.entity.EntityJoinLevelEvent
 import io.samcnpc.core.entity.SamcnpcEntity
 import net.minecraft.client.Minecraft
 import net.minecraft.client.Screenshot
+import net.minecraft.client.resources.DefaultPlayerSkin
 import net.minecraft.client.gui.screens.AccessibilityOnboardingScreen
 import net.minecraft.client.gui.screens.TitleScreen
 import net.minecraft.client.model.HumanoidModel
@@ -19,6 +24,7 @@ import net.minecraft.client.model.PlayerModel
 import net.minecraft.core.BlockPos
 import net.minecraft.core.registries.Registries
 import net.minecraft.nbt.CompoundTag
+import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.Difficulty
 import net.minecraft.world.InteractionHand
 import net.minecraft.world.entity.EntityType
@@ -43,6 +49,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent
 import net.minecraftforge.fml.common.Mod
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.UUID
 
 /** Real integrated-server packets, client entity ticks and the actual rendered player model. */
 @Mod.EventBusSubscriber(modid = SamcnpcCore.MOD_ID, value = [Dist.CLIENT])
@@ -80,6 +87,7 @@ object NpcAnimationClientSmoke {
     private var serverIndex = 0
     private var serverAge = 0
     private var serverNpc: SamcnpcEntity? = null
+    private var serverSummoner: ServerPlayer? = null
     private var meleeTarget: ArmorStand? = null
     private var worldRequested = false
     private var clientTicks = 0
@@ -87,6 +95,7 @@ object NpcAnimationClientSmoke {
     private var stats = FrameStats()
     private val results = mutableListOf<String>()
     private var completed = false
+    private var trackedTridents = 0
     private var pendingScreenshot: String? = null
 
     private class FrameStats {
@@ -130,8 +139,9 @@ object NpcAnimationClientSmoke {
         if (current.index == observedIndex) return
         if (observedIndex >= 0) verifyFrames(scenarios[observedIndex])
         if (current.index == scenarios.size) {
+            check(trackedTridents >= 4) { "Actual client did not receive all four registered NPC trident projectiles: $trackedTridents" }
             completed = true
-            Files.writeString(report, results.joinToString("\n") + "\nPASS\n")
+            Files.writeString(report, results.joinToString("\n") + "\ntracked_npc_tridents=$trackedTridents\nPASS\n")
             logger.info("SAMCNPC ANIMATION SMOKE PASS: {} rendered scenarios", results.size)
             minecraft.stop()
             return
@@ -162,8 +172,14 @@ object NpcAnimationClientSmoke {
             player.setGameMode(GameType.SPECTATOR)
             player.teleportTo(level, 3.5, 100.6, -5.5, 26.565F, 12.0F)
             val npc = checkNotNull(ModEntities.NPC.get().create(level))
-            npc.bindSummoner(player)
-            // Exercise both existing models through the real persisted/synchronized skin binding.
+            // Match each offline fixture's actual UUID default texture and geometry.
+            val summonerUuid = (0L..100L).map { UUID(1L, it) }.first {
+                (DefaultPlayerSkin.getSkinModelName(it) == "slim") == (scenario.skin == PlayerSkinModel.SLIM)
+            }
+            val summoner = ServerPlayer(server, level, GameProfile(summonerUuid, "Anim" + scenario.skin.name))
+            serverSummoner = summoner
+            npc.bindSummoner(summoner)
+            // Exercise persisted/synchronized metadata with the matching Minecraft fallback model.
             val saved = CompoundTag()
             npc.addAdditionalSaveData(saved)
             saved.getCompound("skin").putString("model", scenario.skin.name)
@@ -175,7 +191,7 @@ object NpcAnimationClientSmoke {
             npc.setItemSlot(slot, ItemStack(scenario.action.item))
             check(level.addFreshEntity(npc)) { "Could not spawn animation smoke NPC" }
             // The real summoner may manage its NPC without operator permission.
-            val changed = server.commands.performPrefixedCommand(player.createCommandSourceStack().withPermission(0),
+            val changed = server.commands.performPrefixedCommand(checkNotNull(serverSummoner).createCommandSourceStack().withSuppressedOutput().withPermission(0),
                 "samcnpc animations ${npc.uuid} ${if (scenario.animations) "on" else "off"}")
             check(changed == 1 && npc.animationsEnabled() == scenario.animations) { "Summoner animation command failed" }
             serverNpc = npc
@@ -214,10 +230,15 @@ object NpcAnimationClientSmoke {
         if (action == Action.WALK && serverAge == 32) check(npc.z < 0.0) { "Animation setting prevented locomotion" }
         if (serverAge == 36) {
             if (npc.snapshot().blockBreak != null) npc.abortBlockBreak()
-            if (npc.isUsingItem) npc.cancelItemUse()
+            if (npc.isUsingItem) {
+                if (action == Action.TRIDENT) {
+                    val released = npc.releaseItemUse()
+                    check(released.status == NpcActionStatus.SUCCEEDED) { "Trident shot failed: $released" }
+                } else npc.cancelItemUse()
+            }
         }
         if (!scenario.animations && serverAge == 40) {
-            check(server.commands.performPrefixedCommand(player.createCommandSourceStack().withPermission(0),
+            check(server.commands.performPrefixedCommand(checkNotNull(serverSummoner).createCommandSourceStack().withSuppressedOutput().withPermission(0),
                 "samcnpc animations ${npc.uuid} on") == 1)
         }
         if (!scenario.animations && serverAge == 43) {
@@ -299,6 +320,16 @@ object NpcAnimationClientSmoke {
         Screenshot.grab(minecraft.gameDirectory, filename, minecraft.mainRenderTarget) {
             message -> logger.info("Animation smoke screenshot: {}", message.string)
         }
+    }
+
+    @SubscribeEvent
+    fun tridentJoined(event: EntityJoinLevelEvent) {
+        if (!enabled || completed || !event.level.isClientSide) return
+        val projectile = event.entity as? NpcThrownTridentEntity ?: return
+        check(Minecraft.getInstance().entityRenderDispatcher.getRenderer(projectile) is ThrownTridentRenderer) {
+            "Registered NPC trident did not resolve the actual vanilla client renderer"
+        }
+        trackedTridents++
     }
 
     private fun verifyFrames(scenario: Scenario) {

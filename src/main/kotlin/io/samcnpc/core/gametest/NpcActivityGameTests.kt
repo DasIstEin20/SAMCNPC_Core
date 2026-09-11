@@ -93,8 +93,13 @@ object NpcActivityGameTests {
             furnace.setItem(0, ItemStack(Items.RAW_IRON))
             furnace.setItem(1, ItemStack(Items.COAL))
             first.moveTo(1537 * 16 + 8.5, 180.0, -1536 * 16 + 8.5)
-            helper.runAfterDelay(15) {
+            // GameTest ticks are accelerated; a fixed 15-tick delay can finish before the
+            // newly generated destination's async entity storage is ready. Keep the original
+            // whole-test deadline and require the actual furnace/ticket effects before commands.
+            helper.startSequence().thenWaitUntil {
                 helper.assertTrue(furnace.saveWithoutMetadata().getShort("CookTime") > 0, "Remote furnace did not actually tick without players")
+                helper.assertTrue(tickets(level, first.uuid) == NpcChunkWindow(1537, -1536).chunks(), "Waiting for destination entity readiness and moved tickets: ticks=${first.tickCount}, entitiesLoaded=${level.areEntitiesLoaded(first.chunkPosition().toLong())}, ticking=${level.isPositionEntityTicking(first.blockPosition())}")
+            }.thenExecute {
                 level.setBlockAndUpdate(furnacePosition, Blocks.AIR.defaultBlockState())
                 helper.assertTrue(tickets(level, first.uuid) == NpcChunkWindow(1537, -1536).chunks(), "Tickets did not follow NPC across chunk boundary: position=${first.position()}, tickets=${tickets(level, first.uuid)}")
                 helper.assertTrue(tickets(level, second.uuid) == window, "Moving one NPC removed another NPC's overlapping tickets")

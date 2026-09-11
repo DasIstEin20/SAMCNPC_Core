@@ -38,6 +38,16 @@ tasks.withType(Test).configureEach {
     useJUnitPlatform()
 }
 
+def suiteSmokeId = rootProject.ext.has('fullVerificationId') ? rootProject.ext.fullVerificationId : null
+def respawnSmokeId = providers.gradleProperty('respawnSmokeId').getOrElse(suiteSmokeId ?: 'manual')
+def chunkSmokeId = providers.gradleProperty('chunkSmokeId').getOrElse(suiteSmokeId ?: '')
+if (!(respawnSmokeId ==~ /[A-Za-z0-9_-]+/) || !(chunkSmokeId ==~ /[A-Za-z0-9_-]*/)) {
+    throw new GradleException('Smoke IDs must contain only letters, digits, underscores or hyphens')
+}
+def chunkSmokeDirectory = chunkSmokeId ? "run-chunk-smoke-${chunkSmokeId}" : 'run-chunk-smoke'
+
+def coreGameTestDirectory = "run-gametest-${System.currentTimeMillis()}"
+
 minecraft {
     mappings channel: 'official', version: minecraft_version
     copyIdeResources = true
@@ -70,13 +80,35 @@ minecraft {
                 }
             }
         }
+        clientSkinSmoke {
+            parent runs.client
+            workingDirectory project.file('run-skin-smoke')
+            property 'samcnpc.skinSmoke', 'true'
+            property 'samcnpc.skinFixtureDirectory', providers.gradleProperty('skinFixtureDirectory')
+                .getOrElse(project.file('run-skin-smoke/fixtures').absolutePath)
+            mods { samcnpc_core { source sourceSets.test } }
+        }
         server { args '--nogui' }
-        gameTestServer {}
+        gameTestServer { workingDirectory project.file(coreGameTestDirectory) }
+        serverRespawnSave {
+            taskName 'runRespawnSmokeSave'
+            parent runs.server
+            workingDirectory project.file("run-respawn-smoke-${respawnSmokeId}")
+            property 'samcnpc.respawnSmokePhase', 'save'
+            mods { samcnpc_core { source sourceSets.test } }
+        }
+        serverRespawnLoad {
+            taskName 'runRespawnSmokeLoad'
+            parent runs.server
+            workingDirectory project.file("run-respawn-smoke-${respawnSmokeId}")
+            property 'samcnpc.respawnSmokePhase', 'load'
+            mods { samcnpc_core { source sourceSets.test } }
+        }
         // ForgeGradle merges run configs by name: the base must sort before its children.
         gameTestServerChunkSave {
             taskName 'runChunkSmokeSave'
             parent runs.gameTestServer
-            workingDirectory project.file('run-chunk-smoke')
+            workingDirectory project.file(chunkSmokeDirectory)
             property 'forge.enabledGameTestNamespaces', 'samcnpc_chunk_smoke'
             property 'samcnpc.chunkSmokePhase', 'save'
             mods { samcnpc_core { source sourceSets.test } }
@@ -84,7 +116,7 @@ minecraft {
         gameTestServerChunkLoad {
             taskName 'runChunkSmokeLoad'
             parent runs.gameTestServer
-            workingDirectory project.file('run-chunk-smoke')
+            workingDirectory project.file(chunkSmokeDirectory)
             property 'forge.enabledGameTestNamespaces', 'samcnpc_chunk_smoke'
             property 'samcnpc.chunkSmokePhase', 'load'
             mods { samcnpc_core { source sourceSets.test } }
@@ -121,24 +153,21 @@ tasks.named('jar', Jar).configure {
     finalizedBy 'reobfJar'
 }
 
-tasks.register('verifyProductionKotlin') {
-    group = 'verification'
-    doLast {
-        def javaSources = fileTree('src/main') { include '**/*.java' }.files
-        if (!javaSources.empty) {
-            throw new GradleException("Production source must be Kotlin: ${javaSources.join(', ')}")
-        }
-    }
-}
-
-tasks.named('check').configure {
-    dependsOn tasks.named('verifyProductionKotlin')
-}
-
-// Vanilla's GameTest runner reads editable SNBT fixtures from its working directory.
+// Vanilla's GameTest development runner looks for editable SNBT scenes in the run directory,
+// rather than on the resource path. Keep that fixture reproducible after a clean checkout.
 tasks.register('syncGameTestStructures', Copy) {
     from layout.projectDirectory.dir('src/main/resources/gameteststructures')
-    into layout.projectDirectory.dir('run/gameteststructures')
+    into layout.projectDirectory.dir("${coreGameTestDirectory}/gameteststructures")
+    doLast {
+        // Extended test arenas must have flat terrain outside the small SNBT template too.
+        project.file("${coreGameTestDirectory}/server.properties").text = '''level-name=world
+level-type=minecraft:flat
+generator-settings={"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:plains"}
+generate-structures=false
+spawn-protection=0
+difficulty=easy
+'''
+    }
 }
 
 tasks.matching { it.name == 'prepareRunGameTestServer' }.configureEach {
@@ -147,7 +176,7 @@ tasks.matching { it.name == 'prepareRunGameTestServer' }.configureEach {
 
 tasks.register('syncChunkSmokeStructures', Copy) {
     from layout.projectDirectory.dir('src/main/resources/gameteststructures')
-    into layout.projectDirectory.dir('run-chunk-smoke/gameteststructures')
+    into layout.projectDirectory.dir("${chunkSmokeDirectory}/gameteststructures")
 }
 
 tasks.matching { it.name in ['prepareRunChunkSmokeSave', 'prepareRunChunkSmokeLoad'] }.configureEach {
@@ -156,7 +185,7 @@ tasks.matching { it.name in ['prepareRunChunkSmokeSave', 'prepareRunChunkSmokeLo
 
 ['Save', 'Load'].each { phase ->
     tasks.matching { it.name == "runChunkSmoke${phase}" }.configureEach {
-        def report = layout.projectDirectory.file("run-chunk-smoke/chunk-smoke-${phase.toLowerCase()}.txt").asFile
+        def report = layout.projectDirectory.file("${chunkSmokeDirectory}/chunk-smoke-${phase.toLowerCase()}.txt").asFile
         doFirst {
             report.parentFile.mkdirs()
             report.text = 'RUNNING\n'
@@ -171,7 +200,7 @@ tasks.matching { it.name == 'runChunkSmokeLoad' }.configureEach {
     mustRunAfter tasks.matching { it.name == 'runChunkSmokeSave' }
 }
 
-// Test sources join the mod only for this run; the driver is never shipped in the mod JAR.
+// The smoke driver is test code, loaded only by this run and never shipped in a mod JAR.
 tasks.matching { it.name == 'runClientAnimationSmoke' }.configureEach {
     def report = layout.projectDirectory.file('run-animation-smoke/animation-smoke-result.txt').asFile
     doFirst {
@@ -185,6 +214,57 @@ tasks.matching { it.name == 'runClientAnimationSmoke' }.configureEach {
     }
 }
 
+
+tasks.matching { it.name == 'runClientSkinSmoke' }.configureEach {
+    def report = layout.projectDirectory.file('run-skin-smoke/skin-smoke-result.txt').asFile
+    doFirst {
+        report.parentFile.mkdirs()
+        report.text = 'RUNNING\n'
+    }
+    doLast {
+        if (!report.exists() || !report.text.trim().endsWith('PASS')) {
+            throw new GradleException("Signed-profile skin integration failed. See " + report)
+        }
+    }
+}
+
+// Separate JVMs must retain the same isolated world; use a fresh respawnSmokeId for a new pair.
+['Save', 'Load'].each { phase ->
+    tasks.matching { it.name == "runRespawnSmoke${phase}" }.configureEach {
+        def report = project.file("run-respawn-smoke-${respawnSmokeId}/respawn-smoke-${phase.toLowerCase()}.txt")
+        doFirst {
+            report.parentFile.mkdirs()
+            report.text = 'RUNNING\n'
+            // Project-scoped Minecraft EULA authorization is recorded in root AGENTS.md.
+            new File(report.parentFile, 'eula.txt').text = 'eula=true\n'
+            def settings = new File(report.parentFile, 'server.properties')
+            if (!settings.exists()) settings.text = '''server-ip=127.0.0.1
+server-port=25576
+online-mode=true
+level-name=world
+level-type=minecraft:flat
+level-seed=0
+generate-structures=false
+view-distance=4
+simulation-distance=4
+max-players=1
+spawn-protection=0
+'''
+        }
+        doLast { if (!report.text.startsWith('PASS ')) throw new GradleException("Respawn restart smoke failed: ${report}") }
+    }
+}
+tasks.matching { it.name == 'runRespawnSmokeLoad' }.configureEach {
+    mustRunAfter tasks.matching { it.name == 'runRespawnSmokeSave' }
+}
+
+
+// In the full suite a failed save invalidates its dependent load; other tests can still continue.
+if (suiteSmokeId != null) {
+    tasks.matching { it.name == 'runChunkSmokeLoad' }.configureEach { dependsOn 'runChunkSmokeSave' }
+    tasks.matching { it.name == 'runRespawnSmokeLoad' }.configureEach { dependsOn 'runRespawnSmokeSave' }
+}
+
 tasks.matching { it.name == 'runClientConfigSmoke' }.configureEach {
     def report = layout.projectDirectory.file('run-config-smoke/config-smoke-result.txt').asFile
     doFirst {
@@ -194,4 +274,18 @@ tasks.matching { it.name == 'runClientConfigSmoke' }.configureEach {
     doLast {
         if (!report.text.trim().endsWith('PASS')) throw new GradleException("Configuration client smoke failed: ${report}")
     }
+}
+
+tasks.register('verifyProductionKotlin') {
+    group = 'verification'
+    doLast {
+        def javaSources = fileTree('src/main') { include '**/*.java' }.files
+        if (!javaSources.empty) {
+            throw new GradleException("Production source must be Kotlin: ${javaSources.join(', ')}")
+        }
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn tasks.named('verifyProductionKotlin')
 }

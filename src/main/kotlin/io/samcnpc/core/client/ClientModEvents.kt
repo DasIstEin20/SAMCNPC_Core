@@ -4,6 +4,7 @@ import io.samcnpc.core.SamcnpcCore
 import io.samcnpc.core.entity.ModEntities
 import io.samcnpc.core.inventory.ModMenus
 import net.minecraft.client.gui.screens.MenuScreens
+import net.minecraft.client.renderer.entity.ThrownTridentRenderer
 import net.minecraftforge.api.distmarker.Dist
 import net.minecraftforge.client.event.EntityRenderersEvent
 import net.minecraftforge.eventbus.api.SubscribeEvent
@@ -17,6 +18,7 @@ object ClientModEvents {
     @SubscribeEvent
     fun registerRenderers(event: EntityRenderersEvent.RegisterRenderers) {
         event.registerEntityRenderer(ModEntities.NPC.get(), ::SamcnpcRenderer)
+        event.registerEntityRenderer(ModEntities.NPC_TRIDENT.get(), ::ThrownTridentRenderer)
     }
 
     @SubscribeEvent

@@ -62,6 +62,7 @@ object SamcnpcCommands {
                 .then(Commands.literal("list").executes(::list))
                 .then(NpcActivityCommands.animations())
                 .then(NpcActivityCommands.chunkLoading())
+                .then(NpcSpawnPointCommands.branch())
                 .then(NpcEffectCommands.branch(event.buildContext))
                 .then(
                     Commands.literal("hearts")

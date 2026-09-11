@@ -11,7 +11,7 @@ import java.util.WeakHashMap
 
 /** Fixed-size messages; only an operator or the integrated world's host may change settings. */
 internal object NpcSettingsNetwork {
-    private const val VERSION = "1"
+    private const val VERSION = "2"
     private val channel = NetworkRegistry.newSimpleChannel(
         ResourceLocation.fromNamespaceAndPath(SamcnpcCore.MOD_ID, "settings"), { VERSION }, VERSION::equals, VERSION::equals,
     )
@@ -69,6 +69,9 @@ internal object NpcSettingsNetwork {
             }) return "samcnpc.config.locked"
         val scope = if (global) NpcSettingsConfig.global else NpcSettingsConfig.world
         if (scope.choices() == choices) return null
+        if (choices[NpcSetting.KEEP_INVENTORY.ordinal] != scope.choice(NpcSetting.KEEP_INVENTORY) &&
+            choices[NpcSetting.KEEP_INVENTORY.ordinal] == SettingChoice.YES &&
+            !NpcSettingsConfig.keepInventoryAvailable(global, choices)) return "samcnpc.config.requires_respawn"
         val tick = player.server.tickCount
         if (lastWrite[player]?.let { tick - it < 10 } == true) return "samcnpc.config.wait"
         lastWrite[player] = tick

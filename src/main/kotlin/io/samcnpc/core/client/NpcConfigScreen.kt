@@ -21,10 +21,14 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
     private var requested = false
     private var waiting = false
     private var message = ""
+    private var scrollOffset = 0
     private val inWorld: Boolean get() = minecraft?.level != null
     private val panelLeft: Int get() = (width - panelWidth) / 2
     private val panelWidth: Int get() = minOf(430, width - 16)
-    private val panelTop: Int get() = maxOf(2, (height - 236) / 2)
+    private val panelHeight: Int get() = minOf(296, height - 8)
+    private val panelTop: Int get() = (height - panelHeight) / 2
+    private val visibleRows: Int get() = ((panelHeight - 111) / 18).coerceIn(1, NpcSetting.entries.size)
+    private val footerY: Int get() = panelTop + panelHeight - 25
 
     override fun init() {
         if (!requested) {
@@ -68,6 +72,12 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
         worldTab.active = inWorld && globalTab && !waiting
         worldTab.tooltip = Tooltip.create(tr(if (inWorld) "world_hint" else "open_world"))
         val current = snapshot
+        scrollOffset = scrollOffset.coerceIn(0, NpcSetting.entries.size - visibleRows)
+        val respawnIndex = NpcSetting.RESPAWN.ordinal
+        val respawnAvailable = current != null && SettingChoice.resolve(
+            (if (globalTab) draft else current.global).getOrElse(respawnIndex) { SettingChoice.DEFAULT },
+            (if (globalTab) current.world else draft).getOrElse(respawnIndex) { SettingChoice.DEFAULT }, false,
+        )
         for (setting in NpcSetting.entries) {
             val locked = !globalTab && current?.global?.get(setting.ordinal) != SettingChoice.DEFAULT
             val choice = draft.getOrNull(setting.ordinal) ?: SettingChoice.DEFAULT
@@ -75,13 +85,19 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
             val button = addRenderableWidget(Button.builder(label) {
                 draft[setting.ordinal] = draft[setting.ordinal].next()
                 rebuild()
-            }.bounds(left + panelWidth - 106, top + 72 + setting.ordinal * 18, 106, 18).build())
-            button.active = current?.editable == true && !locked && !waiting
-            button.tooltip = Tooltip.create(if (locked) tr("locked") else Component.translatable("samcnpc.config.${setting.key}.hint"))
+            }.bounds(left + panelWidth - 106, top + 72 + (setting.ordinal - scrollOffset) * 18, 106, 18).build())
+            val dependent = setting == NpcSetting.KEEP_INVENTORY && !respawnAvailable
+            button.visible = setting.ordinal in scrollOffset until scrollOffset + visibleRows
+            button.active = button.visible && current?.editable == true && !locked && !waiting && !dependent
+            button.tooltip = Tooltip.create(when {
+                locked -> tr("locked")
+                dependent -> tr("requires_respawn")
+                else -> Component.translatable("samcnpc.config.${setting.key}.hint")
+            })
         }
-        val apply = addRenderableWidget(Button.builder(tr("apply")) { apply() }.bounds(left, top + 211, 90, 20).build())
+        val apply = addRenderableWidget(Button.builder(tr("apply")) { apply() }.bounds(left, footerY, 90, 20).build())
         apply.active = current?.editable == true && !waiting && draft != (if (globalTab) current.global else current.world)
-        addRenderableWidget(Button.builder(Component.translatable("gui.done")) { onClose() }.bounds(left + panelWidth - 90, top + 211, 90, 20).build()).active = !waiting
+        addRenderableWidget(Button.builder(Component.translatable("gui.done")) { onClose() }.bounds(left + panelWidth - 90, footerY, 90, 20).build()).active = !waiting
     }
 
     private fun apply() {
@@ -106,15 +122,34 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
         renderBackground(graphics)
         val left = panelLeft
         val top = panelTop
-        graphics.fill(left - 7, top - 2, left + panelWidth + 7, top + 235, 0xD0202020.toInt())
+        graphics.fill(left - 7, top - 2, left + panelWidth + 7, top + panelHeight, 0xD0202020.toInt())
         graphics.blit(LOGO, left, top, 82, 39, 0.0F, 0.0F, LOGO_WIDTH, LOGO_HEIGHT, LOGO_WIDTH, LOGO_HEIGHT)
         graphics.drawString(font, title, left + 92, top + 7, 0xFFFFFF)
         graphics.drawString(font, tr(if (globalTab) "global_hint" else "world_hint"), left + 92, top + 23, 0xB8B8B8)
-        for (setting in NpcSetting.entries) {
-            graphics.drawString(font, Component.translatable("samcnpc.config.${setting.key}"), left + 3, top + 77 + setting.ordinal * 18, 0xE4E4E4)
+        for (setting in NpcSetting.entries.drop(scrollOffset).take(visibleRows)) {
+            val label = Component.translatable("samcnpc.config.${setting.key}").string
+            graphics.drawString(font, font.plainSubstrByWidth(label, panelWidth - 113), left + 3,
+                top + 77 + (setting.ordinal - scrollOffset) * 18, 0xE4E4E4)
         }
-        if (message.isNotEmpty()) graphics.drawCenteredString(font, Component.translatable(message), width / 2, top + 201, 0xB8DDF2)
+        if (visibleRows < NpcSetting.entries.size) {
+            val track = visibleRows * 18
+            val thumb = maxOf(12, track * visibleRows / NpcSetting.entries.size)
+            val y = top + 72 + (track - thumb) * scrollOffset / (NpcSetting.entries.size - visibleRows)
+            graphics.fill(left + panelWidth + 2, top + 72, left + panelWidth + 5, top + 72 + track, 0xFF505050.toInt())
+            graphics.fill(left + panelWidth + 2, y, left + panelWidth + 5, y + thumb, 0xFFB8B8B8.toInt())
+        }
+        if (message.isNotEmpty()) graphics.drawCenteredString(font, Component.translatable(message), width / 2, footerY - 10, 0xB8DDF2)
         super.render(graphics, mouseX, mouseY, partialTick)
+    }
+
+    override fun mouseScrolled(mouseX: Double, mouseY: Double, delta: Double): Boolean {
+        if (mouseX in panelLeft.toDouble()..(panelLeft + panelWidth + 6).toDouble() &&
+            mouseY >= panelTop + 68 && mouseY < footerY - 12 && delta != 0.0) {
+            scrollOffset = (scrollOffset + if (delta > 0.0) -1 else 1).coerceIn(0, NpcSetting.entries.size - visibleRows)
+            rebuild()
+            return true
+        }
+        return super.mouseScrolled(mouseX, mouseY, delta)
     }
 
     override fun isPauseScreen(): Boolean = false

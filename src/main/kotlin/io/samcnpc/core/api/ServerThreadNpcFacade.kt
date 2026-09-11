@@ -11,6 +11,7 @@ import java.util.UUID
 internal class ServerThreadNpcFacade(
     private val server: MinecraftServer,
     private val delegate: NpcFacade,
+    private val isCurrent: () -> Boolean,
 ) : NpcFacade {
     override val npcUuid: UUID
         get() = delegate.npcUuid
@@ -18,6 +19,8 @@ internal class ServerThreadNpcFacade(
     override fun snapshot(): NpcSnapshot = requireServerThread { delegate.snapshot() }
 
     override fun inventoryContents(): List<NpcInventoryEntry> = requireServerThread { delegate.inventoryContents() }
+
+    override fun inventoryLoadSnapshot(): NpcInventoryLoadSnapshot? = requireServerThread { delegate.inventoryLoadSnapshot() }
 
     override fun equipmentContents(): NpcEquipmentSnapshot = requireServerThread { delegate.equipmentContents() }
 
@@ -39,6 +42,9 @@ internal class ServerThreadNpcFacade(
 
     override fun navigateTo(position: NpcPosition, speedMultiplier: Float): NpcActionResult =
         action(NpcActionChannel.LOCOMOTION) { delegate.navigateTo(position, speedMultiplier) }
+
+    override fun navigateTo(request: NpcNavigationRequest): NpcActionResult =
+        action(NpcActionChannel.LOCOMOTION) { delegate.navigateTo(request) }
 
     override fun stopControl(): NpcActionResult = action(NpcActionChannel.LOCOMOTION, delegate::stopControl)
 
@@ -110,15 +116,20 @@ internal class ServerThreadNpcFacade(
     override fun cancelItemUse(): NpcActionResult =
         action(NpcActionChannel.MAIN_HAND, delegate::cancelItemUse)
 
-    private fun action(channel: NpcActionChannel, invoke: () -> NpcActionResult): NpcActionResult =
-        if (server.isSameThread) invoke() else NpcActionResult.rejected(
-            "NPC capability must be called on the authoritative server thread",
-            NpcActionCode.NOT_READY,
-            channel,
+    private fun action(channel: NpcActionChannel, invoke: () -> NpcActionResult): NpcActionResult {
+        if (!server.isSameThread) return NpcActionResult.rejected(
+            "NPC capability must be called on the authoritative server thread", NpcActionCode.NOT_READY, channel,
         )
+        if (!isCurrent()) return NpcActionResult.rejected(
+            "NPC capability refers to an unloaded, removed or replaced body; acquire its current runtime",
+            NpcActionCode.NOT_FOUND, channel,
+        )
+        return invoke()
+    }
 
     private fun <T> requireServerThread(invoke: () -> T): T {
         check(server.isSameThread) { "NPC observation must be read on the authoritative server thread" }
+        check(isCurrent()) { "NPC observation refers to an unloaded, removed or replaced body" }
         return invoke()
     }
 

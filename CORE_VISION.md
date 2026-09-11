@@ -7,9 +7,7 @@ SAMCNPC Core is **not an AI mod**. It is the player-like NPC runtime on which AI
 The clean mental model is:
 
 > **Core answers “what can this NPC mechanically do, and how does Minecraft perform it?”**
->
 > **Behavior answers “what should the NPC do now, where, and why?”**
->
 > **LLM integration may later answer “what higher-level goal are we trying to achieve?”**
 
 With only `samcnpc-core.jar` installed, an NPC should be a fully valid, persistent, player-shaped body with no autonomous policy. It should stand idle forever unless a player, debug command, test harness, Behavior module, or another mod explicitly sends it an action.
@@ -48,8 +46,10 @@ Core owns authoritative NPC item state:
 - offhand;
 - head/chest/legs/feet;
 - SAMCNPC ammunition reserve;
-- SAMCNPC one-item totem staging reserve. It never protects from death automatically; callers
-  equip it into offhand when they want vanilla totem behavior.
+- SAMCNPC one-item totem reserve. At the user's explicit 2026-09-11 request, it protects
+  automatically after held totems have had their normal chance. A successful activation consumes
+  the reserve without exchanging either hand, respects Forge's use veto and vanilla bypass damage,
+  and prevents death/drop/respawn.
 
 The GUI is only a client control surface for this server-owned state.
 

@@ -11,6 +11,8 @@ interface NpcFacade {
 
     fun snapshot(): NpcSnapshot
     fun inventoryContents(): List<NpcInventoryEntry>
+    /** Null for a fresh body, an unsupported NBT version, or a facade without this capability. */
+    fun inventoryLoadSnapshot(): NpcInventoryLoadSnapshot? = null
     fun equipmentContents(): NpcEquipmentSnapshot
     fun equipmentKnowledge(): NpcEquipmentKnowledge
     fun worldView(): NpcWorldView
@@ -24,6 +26,17 @@ interface NpcFacade {
      * enough to perform its next action. The bounded route expires unless refreshed or stopped.
      */
     fun navigateTo(position: NpcPosition, speedMultiplier: Float = 1.0F): NpcActionResult
+
+    /** Explicit precision/lease overload; old external facades must not silently ignore options. */
+    fun navigateTo(request: NpcNavigationRequest): NpcActionResult {
+        val problem = request.validationProblem()
+        if (problem != null) return NpcActionResult.rejected(problem, NpcActionCode.INVALID_REQUEST, NpcActionChannel.LOCOMOTION)
+        if (request.arrivalDistance != NpcNavigationRequest.DEFAULT_ARRIVAL_DISTANCE ||
+            request.leaseTicks != NpcNavigationRequest.DEFAULT_LEASE_TICKS) {
+            return NpcActionResult.unsupported("facade does not implement explicit navigation limits", NpcActionChannel.LOCOMOTION)
+        }
+        return navigateTo(request.position, request.speedMultiplier)
+    }
     fun stopControl(): NpcActionResult
     fun jump(): NpcActionResult
     fun selectHotbarSlot(slot: Int): NpcActionResult

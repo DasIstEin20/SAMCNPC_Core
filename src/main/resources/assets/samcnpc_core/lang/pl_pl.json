@@ -30,5 +30,12 @@
   "samcnpc.config.ignoreMissingTool": "Ignore missing tool",
   "samcnpc.config.ignoreMissingTool.hint": "NPC wybiera odpowiednie narzędzie, a gdy go brakuje, pracuje gołą ręką. Nadal obowiązują zasady dropu: część bloków bez narzędzia nic nie upuści. Domyślnie: No.",
   "samcnpc.config.bareHandsOnly": "Praca wyłącznie ręką",
-  "samcnpc.config.bareHandsOnly.hint": "NPC kopie wyłącznie pustą ręką, nawet gdy ma narzędzie. Ma pierwszeństwo przed Ignore missing tool. Trzymany przedmiot zostaje w ekwipunku; potrzebny jest wolny slot. Domyślnie: No."
+  "samcnpc.config.bareHandsOnly.hint": "NPC kopie wyłącznie pustą ręką, nawet gdy ma narzędzie. Ma pierwszeństwo przed Ignore missing tool. Trzymany przedmiot zostaje w ekwipunku; potrzebny jest wolny slot. Domyślnie: No.",
+  "samcnpc.config.respawn": "Odradzanie NPC",
+  "samcnpc.config.respawn.hint": "Odrodzenie po 5 sekundach w miejscu pierwotnego przywołania, także gdy summoner jest offline. Poczekaj, jeśli w pobliżu nie ma bezpiecznego miejsca. Domyślnie: No.",
+  "samcnpc.config.keepInventory": "Zachowuj ekwipunek",
+  "samcnpc.config.keepInventory.hint": "Wymaga odradzania. Zachowuje ekwipunek, pancerz, drugą rękę, amunicję i totem. Zachowane przedmioty nie wypadają po śmierci. Domyślnie: No.",
+  "samcnpc.config.dropItemsAfterDeath": "Wyrzucaj przedmioty po śmierci",
+  "samcnpc.config.dropItemsAfterDeath.hint": "Wyrzuć wszystkie przedmioty po śmierci, jeśli nie zachowuje ich Keep inventory. No usuwa niezachowywane przedmioty. Jawne odwołanie NPC nadal wyrzuca ekwipunek. Domyślnie: Yes.",
+  "samcnpc.config.requires_respawn": "Włącz odradzanie, aby włączyć zachowywanie ekwipunku."
 }

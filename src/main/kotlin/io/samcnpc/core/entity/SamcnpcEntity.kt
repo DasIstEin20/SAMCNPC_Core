@@ -1,13 +1,13 @@
 package io.samcnpc.core.entity
 
 import io.samcnpc.core.api.NpcActionResult
+import io.samcnpc.core.api.NpcActionCompletion
+import io.samcnpc.core.api.NpcControlState
+import io.samcnpc.core.api.NpcNavigationRequest
 import io.samcnpc.core.api.NpcActionStatus
 import io.samcnpc.core.api.NpcActionChannel
 import io.samcnpc.core.api.NpcActionCode
 import io.samcnpc.core.api.NpcAttackTiming
-import io.samcnpc.core.api.NpcBlockBreakMath
-import io.samcnpc.core.api.NpcMiningSpeed
-import io.samcnpc.core.api.NpcBlockBreakState
 import io.samcnpc.core.api.NpcBlockPosition
 import io.samcnpc.core.api.NpcBlockHit
 import io.samcnpc.core.api.NpcEntityHit
@@ -19,6 +19,7 @@ import io.samcnpc.core.api.NpcFacade
 import io.samcnpc.core.api.NpcEquipmentDestination
 import io.samcnpc.core.api.NpcEquipmentSnapshot
 import io.samcnpc.core.api.NpcEquipmentKnowledge
+import io.samcnpc.core.api.NpcInventoryLoadSnapshot
 import io.samcnpc.core.api.NpcInventoryEntry
 import io.samcnpc.core.api.NpcItemStackSnapshot
 import io.samcnpc.core.api.NpcItemClassifier
@@ -29,9 +30,6 @@ import io.samcnpc.core.api.NpcPosition
 import io.samcnpc.core.api.NpcSnapshot
 import io.samcnpc.core.api.NpcVector
 import io.samcnpc.core.api.NpcRemovedEvent
-import io.samcnpc.core.api.NpcRangedAttackPhase
-import io.samcnpc.core.api.NpcRangedAttackState
-import io.samcnpc.core.api.NpcRangedWeaponKind
 import io.samcnpc.core.api.NpcServerTickEvent
 import io.samcnpc.core.api.NpcActionCompletedEvent
 import io.samcnpc.core.api.NpcHandle
@@ -50,7 +48,6 @@ import io.samcnpc.core.config.NpcToolDurability
 import io.samcnpc.core.health.NpcHeartSettings
 import io.samcnpc.core.activity.NpcActivityEvents
 import net.minecraft.nbt.CompoundTag
-import net.minecraft.nbt.ListTag
 import net.minecraft.network.syncher.EntityDataAccessor
 import net.minecraft.network.syncher.EntityDataSerializers
 import net.minecraft.network.syncher.SynchedEntityData
@@ -66,16 +63,12 @@ import net.minecraft.world.InteractionHand
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.EntityType
 import net.minecraft.world.entity.EquipmentSlot
-import net.minecraft.world.entity.item.ItemEntity
 import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.entity.Mob
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier
 import net.minecraft.world.entity.ai.attributes.Attributes
 import net.minecraft.world.entity.ai.navigation.PathNavigation
-import net.minecraft.world.entity.projectile.AbstractArrow
-import net.minecraft.world.entity.projectile.ThrownTrident
 import net.minecraft.world.entity.projectile.ThrownPotion
-import net.minecraft.world.item.ArrowItem
 import net.minecraft.world.item.BlockItem
 import net.minecraft.world.item.BowItem
 import net.minecraft.world.item.CrossbowItem
@@ -83,34 +76,21 @@ import net.minecraft.world.item.ItemStack
 import net.minecraft.world.item.TridentItem
 import net.minecraft.world.item.ThrowablePotionItem
 import net.minecraft.world.item.context.UseOnContext
-import net.minecraft.world.item.Items
-import net.minecraft.world.item.enchantment.Enchantments
 import net.minecraft.world.level.Level
-import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.level.block.ButtonBlock
 import net.minecraft.world.level.block.DoorBlock
 import net.minecraft.world.level.block.LeverBlock
-import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.HitResult
 import net.minecraft.world.phys.Vec3
 import net.minecraft.world.phys.BlockHitResult
-import net.minecraft.world.InteractionResult
-import net.minecraft.world.phys.shapes.CollisionContext
 import net.minecraft.world.level.ClipContext
-import net.minecraft.tags.BlockTags
-import net.minecraft.tags.FluidTags
 import net.minecraft.sounds.SoundEvents
 import net.minecraft.sounds.SoundSource
 import net.minecraftforge.common.MinecraftForge
-import net.minecraftforge.common.ForgeHooks
-import net.minecraftforge.common.util.BlockSnapshot
-import net.minecraftforge.event.ForgeEventFactory
 import net.minecraftforge.registries.ForgeRegistries
 import net.minecraft.world.item.enchantment.EnchantmentHelper
 import java.util.UUID
 import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.sqrt
 
 /**
  * A dedicated living entity, deliberately not a ServerPlayer surrogate. It stores only stable
@@ -123,22 +103,28 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     private var ammunition: ItemStack = ItemStack.EMPTY
     private var totem: ItemStack = ItemStack.EMPTY
     private var selectedHotbarSlot: Int = 0
+    private var loadedInventory: NpcInventoryLoadSnapshot? = null
     private var controlInput: NpcControlInput = NpcControlInput.IDLE
     private var controlActionId: UUID? = null
     private var controlExpiresAt: Long = Long.MIN_VALUE
-    private var activeItemUseActionId: UUID? = null
-    private var activeItemUseChannel: NpcActionChannel? = null
     private var dismissalRequested: Boolean = false
+    private var recentDamageEventId: UUID? = null
     private var recentAttackerUuid: UUID? = null
     private var recentHurtGameTime: Long = Long.MIN_VALUE
     private var lastAttackGameTime: Long = Long.MIN_VALUE
     private var appliedMainHandStack: ItemStack = ItemStack.EMPTY
     private var removalAnnounced: Boolean = false
     private var deathEquipmentDropped: Boolean = false
-    private var activeBlockBreak: ActiveBlockBreak? = null
-    private var activeRangedAttack: ActiveRangedAttack? = null
-    private var pendingNavigation: PendingNavigation? = null
-    private var navigationExpiresAt: Long = Long.MIN_VALUE
+    internal var lifeId: UUID = UUID.randomUUID()
+        private set
+    internal var summonPoint: io.samcnpc.core.health.NpcSummonPoint? = null
+        private set
+    private val inventoryActions = NpcInventoryActions(this)
+    private val blockBreakController = NpcBlockBreakController(this, ::completeAction)
+    private val rangedController = NpcRangedAttackController(this, ::completeAction)
+    private val navigationController = NpcNavigationController(this, ::completeAction)
+    private val itemUseController = NpcItemUseController(this, ::completeAction)
+    private var recentActionCompletions: List<NpcActionCompletion> = emptyList()
 
     init {
         // Persistence and passive contact pickup are body mechanics, not autonomous policy.
@@ -181,17 +167,28 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
 
     override fun tick() {
         if (!level().isClientSide) {
-            if (isAlive && NpcSettingsConfig.enabled(NpcSetting.IMMORTAL)) health = maxHealth
-            expireControlIfNeeded()
-            applyControlInput()
+            if (isAlive) {
+                if (NpcSettingsConfig.enabled(NpcSetting.IMMORTAL)) health = maxHealth
+                itemUseController.beforeTick()
+                expireControlIfNeeded()
+                applyControlInput()
+            } else {
+                cancelActiveActionsForRemoval(NpcLifecycleState.DEAD)
+            }
         }
         super.tick()
         if (!level().isClientSide) {
-            advanceNavigation()
-            vacuumNearbyItems()
-            advanceRangedAttack()
-            completeNaturallyFinishedItemUse()
-            advanceBlockBreak()
+            // Vanilla keeps a dead body ticking through its death animation. It must finish that
+            // lifecycle without exposing world actions or decision ticks to Behavior.
+            if (!isAlive || isRemoved) {
+                cancelActiveActionsForRemoval(if (!isAlive) NpcLifecycleState.DEAD else NpcLifecycleState.REMOVED)
+                return
+            }
+            navigationController.tick()
+            inventoryActions.tickPassivePickup()
+            rangedController.tick()
+            itemUseController.afterTick()
+            blockBreakController.tick()
             val snapshot = snapshot()
             val server = (level() as? ServerLevel)?.server
             if (server != null) {
@@ -230,6 +227,9 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             if (server != null) {
                 NpcActivityEvents.existing(server)?.removed(this, reason)
                 CoreNpcApi.unregister(this, server, state)
+                if (reason.shouldDestroy() && io.samcnpc.core.health.NpcRespawns.data(server).find(uuid) == null) {
+                    io.samcnpc.core.health.NpcRespawns.data(server).removeSpawnPoint(uuid)
+                }
             }
             MinecraftForge.EVENT_BUS.post(NpcRemovedEvent(lifecycle))
         }
@@ -242,16 +242,29 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         NpcActivityEvents.existing(server)?.leftWorld(this)
     }
 
-    /**
-     * A Core NPC is not a Player and therefore cannot retain inventory after its entity is gone.
-     * Drop every authoritative Core store exactly once instead of inheriting Mob's random equipment
-     * chances or silently losing the separate 36-slot inventory and reserves.
-     */
+    override fun die(source: net.minecraft.world.damagesource.DamageSource) {
+        // Vanilla has already offered both held totems. Reserve protection precedes accepted death,
+        // so it cannot drop inventory, cancel work as DEAD, or enqueue a respawn.
+        if (!dead && !isRemoved && io.samcnpc.core.health.NpcTotemReserve.protect(this, source)) return
+        super.die(source)
+        // Forge's death veto runs before LivingEntity sets dead. A totem never enters this path.
+        // Some killer hooks bypass the loot path, but accepted death still needs one lifecycle decision.
+        if (dead && !level().isClientSide && !deathEquipmentDropped) dropEquipment()
+    }
+
     override fun dropEquipment() {
-        if (deathEquipmentDropped) {
-            return
-        }
+        if (level().isClientSide || deathEquipmentDropped) return
         deathEquipmentDropped = true
+        if (dead && !dismissalRequested) {
+            val policy = NpcSettingsConfig.deathPolicy()
+            val retained = policy.items == io.samcnpc.core.health.NpcDeathPolicy.Items.KEEP
+            val scheduled = policy.respawn && io.samcnpc.core.health.NpcRespawns.schedule(this, retained)
+            if ((retained && scheduled) || policy.items == io.samcnpc.core.health.NpcDeathPolicy.Items.DISCARD) {
+                clearAuthoritativeItems()
+                return
+            }
+        }
+        // Main hand aliases the selected inventory stack; drop each real store exactly once.
         for (slot in inventory.indices) {
             dropAndClearInventorySlot(slot)
         }
@@ -265,6 +278,40 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         refreshMainHandAttributes()
     }
 
+    private fun clearAuthoritativeItems() {
+        for (slot in inventory.indices) inventory[slot] = ItemStack.EMPTY
+        for (slot in EquipmentSlot.values()) super.setItemSlot(slot, ItemStack.EMPTY)
+        ammunition = ItemStack.EMPTY
+        totem = ItemStack.EMPTY
+        refreshMainHandAttributes()
+    }
+
+    internal fun respawnSnapshot(keep: Boolean, nextLife: UUID): CompoundTag {
+        val saved = saveWithoutId(CompoundTag())
+        val result = CompoundTag()
+        for (key in io.samcnpc.core.health.NpcRespawnData.BODY_KEYS) saved.get(key)?.let { result.put(key, it.copy()) }
+        result.putUUID("samcnpcLife", nextLife)
+        if (!keep) for (key in listOf("Items", "ArmorItems", "HandItems", "ammunition", "totem")) result.remove(key)
+        return result
+    }
+
+    override fun hurtCurrentlyUsedShield(amount: Float) {
+        val shield = useItem
+        if (level().isClientSide || amount < 3.0F ||
+            !shield.canPerformAction(net.minecraftforge.common.ToolActions.SHIELD_BLOCK)) return
+        val hand = usedItemHand
+        // LivingEntity leaves this hook empty; Player alone pays this vanilla durability cost.
+        // Forge ShieldBlockEvent decides whether to call it, so its veto remains authoritative.
+        NpcToolDurability.perform(shield) {
+            shield.hurtAndBreak(1 + net.minecraft.util.Mth.floor(amount), this) { it.broadcastBreakEvent(hand) }
+        }
+        if (!shield.isEmpty) return
+        setItemInHand(hand, ItemStack.EMPTY)
+        stopUsingItem()
+        itemUseController.finish(NpcActionResult.failed("shield broke while blocking", NpcActionCode.MISSING_RESOURCE))
+        playSound(SoundEvents.SHIELD_BREAK, 0.8F, 0.8F + random.nextFloat() * 0.4F)
+    }
+
     override fun hurt(source: net.minecraft.world.damagesource.DamageSource, amount: Float): Boolean {
         val serverLevel = level() as? ServerLevel
         if (serverLevel != null && NpcSettingsConfig.enabled(NpcSetting.IMMORTAL, !NpcHeartSettings.enabled(serverLevel.server))) {
@@ -274,12 +321,15 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         if (accepted && !level().isClientSide) {
             val attacker = source.entity
             if (attacker != null && attacker.uuid != uuid) {
+                recentDamageEventId = UUID.randomUUID()
                 recentAttackerUuid = attacker.uuid
                 recentHurtGameTime = level().gameTime
             }
         }
         return accepted
     }
+
+    internal fun selectedInventorySlot(): Int = selectedHotbarSlot
 
     override fun getMainHandItem(): ItemStack = NpcHotbarAlias.stack(inventory, selectedHotbarSlot)
 
@@ -299,6 +349,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     fun bindSummoner(player: ServerPlayer) {
+        if (summonPoint == null) summonPoint = io.samcnpc.core.health.NpcSummonPoint.capture(this)
         summonerBinding = SummonerBinding(player.uuid, player.gameProfile.name.take(MAX_NAME_LENGTH))
         refreshSkin(player)
         syncBinding()
@@ -320,6 +371,11 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         skinBinding = captured
         syncSkin()
         return NpcActionResult.succeeded("skin snapshot refreshed")
+    }
+
+    internal fun setRespawnPoint(point: io.samcnpc.core.health.NpcSummonPoint) {
+        check(!level().isClientSide) { "Respawn point changes require the server" }
+        summonPoint = point
     }
 
     fun summonerBinding(): SummonerBinding? = summonerBinding
@@ -363,20 +419,26 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             riding = isPassenger,
             sprinting = isSprinting,
             sneaking = isShiftKeyDown,
+            lastDamageEventId = recentDamageEventId,
             lastDamageSourceEntityUuid = recentAttackerUuid,
             lastDamageAgeTicks = hurtAge,
             healthFraction = fraction,
             gameTime = level().gameTime,
             attackStrength = attackStrengthScale(),
             itemUse = itemUseState(),
-            blockBreak = blockBreakState(),
-            rangedAttack = rangedAttackState(),
+            blockBreak = blockBreakController.snapshot(),
+            rangedAttack = rangedController.snapshot(),
             equipment = equipmentKnowledge(),
             selectedHotbarSlot = selectedHotbarSlot,
             ignoreMissingMiningTool = NpcSettingsConfig.enabled(NpcSetting.IGNORE_MISSING_TOOL),
             bareHandsMiningOnly = NpcSettingsConfig.enabled(NpcSetting.BARE_HANDS_ONLY),
+            control = controlActionId?.let { NpcControlState(it, controlInput, controlExpiresAt) },
+            navigation = navigationController.snapshot(),
+            recentCompletions = recentActionCompletions,
         )
     }
+
+    override fun inventoryLoadSnapshot(): NpcInventoryLoadSnapshot? = loadedInventory
 
     override fun inventoryContents(): List<NpcInventoryEntry> =
         inventory.indices.map { slot ->
@@ -544,54 +606,38 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             return NpcActionResult.rejected("sprint and sneak cannot be active together", NpcActionCode.CONFLICT, NpcActionChannel.LOCOMOTION)
         }
         // Direct player-like controls explicitly replace a previously submitted path.
-        pendingNavigation = null
-        navigationExpiresAt = Long.MIN_VALUE
+        navigationController.cancel(NpcActionCode.CANCELLED, "navigation stopped or replaced by direct control")
         navigation.stop()
         controlInput = input
-        val actionId = controlActionId ?: UUID.randomUUID().also { controlActionId = it }
+        val previousAction = controlActionId
+        val actionId = previousAction ?: UUID.randomUUID()
+        controlActionId = actionId
         controlExpiresAt = level().gameTime + CONTROL_INPUT_TTL_TICKS
-        return NpcActionResult.accepted("control input applied for $CONTROL_INPUT_TTL_TICKS ticks", actionId, NpcActionChannel.LOCOMOTION)
+        return if (previousAction == null) NpcActionResult.accepted("control input applied for $CONTROL_INPUT_TTL_TICKS ticks", actionId, NpcActionChannel.LOCOMOTION)
+        else NpcActionResult.running("control input renewed", actionId, NpcActionChannel.LOCOMOTION)
     }
 
-    override fun navigateTo(position: NpcPosition, speedMultiplier: Float): NpcActionResult {
-        if (!position.x.isFinite() || !position.y.isFinite() || !position.z.isFinite() || !speedMultiplier.isFinite()) {
-            return NpcActionResult.rejected("navigation position and speed must be finite", NpcActionCode.INVALID_REQUEST, NpcActionChannel.LOCOMOTION)
-        }
-        if (speedMultiplier !in MIN_NAVIGATION_SPEED_MULTIPLIER..MAX_NAVIGATION_SPEED_MULTIPLIER) {
-            return NpcActionResult.rejected(
-                "navigation speed multiplier must be between $MIN_NAVIGATION_SPEED_MULTIPLIER and $MAX_NAVIGATION_SPEED_MULTIPLIER",
-                NpcActionCode.INVALID_REQUEST,
-                NpcActionChannel.LOCOMOTION,
-            )
-        }
-        if (distanceToSqr(position.x, position.y, position.z) > MAX_NAVIGATION_TARGET_DISTANCE_SQR) {
-            return NpcActionResult.rejected("navigation target is outside the bounded Core path range", NpcActionCode.OUT_OF_RANGE, NpcActionChannel.LOCOMOTION)
-        }
-        if (activeBlockBreak != null) {
+    override fun navigateTo(position: NpcPosition, speedMultiplier: Float): NpcActionResult =
+        navigateTo(NpcNavigationRequest(position, speedMultiplier))
+
+    override fun navigateTo(request: NpcNavigationRequest): NpcActionResult {
+        if (blockBreakController.isActive) {
             return NpcActionResult.rejected("abort block breaking before starting navigation", NpcActionCode.CONFLICT, NpcActionChannel.LOCOMOTION)
         }
-
+        val result = navigationController.start(request)
+        if (result.status == NpcActionStatus.REJECTED || result.status == NpcActionStatus.FAILED || result.status == NpcActionStatus.UNSUPPORTED) return result
         val replacedControlAction = controlActionId
         controlInput = NpcControlInput.IDLE
         controlActionId = null
         controlExpiresAt = Long.MIN_VALUE
         setXxa(0.0F)
         setZza(0.0F)
-        setSprinting(speedMultiplier > 1.0F)
+        setSprinting(request.speedMultiplier > 1.0F && navigationController.isActive)
         setShiftKeyDown(false)
         if (replacedControlAction != null) {
-            completeAction(NpcActionResult.succeeded("control input replaced by requested navigation", replacedControlAction, NpcActionChannel.LOCOMOTION))
+            completeAction(NpcActionResult.failed("direct control replaced by navigation", NpcActionCode.CANCELLED, replacedControlAction, NpcActionChannel.LOCOMOTION))
         }
-        pendingNavigation = PendingNavigation(position, speedMultiplier)
-        navigationExpiresAt = level().gameTime + NAVIGATION_REQUEST_TTL_TICKS
-        return if (navigation.moveTo(position.x, position.y, position.z, speedMultiplier.toDouble())) {
-            NpcActionResult.accepted("navigation path submitted", channel = NpcActionChannel.LOCOMOTION)
-        } else {
-            // Ground navigation may be queried while an entity is airborne for a tick or while a
-            // chunk's collision state is settling. Retain the caller's bounded request and retry
-            // it after future entity ticks. The route still expires unless the caller refreshes it.
-            NpcActionResult.accepted("navigation request queued until Core can create a path", channel = NpcActionChannel.LOCOMOTION)
-        }
+        return result
     }
 
     override fun stopControl(): NpcActionResult {
@@ -599,8 +645,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         controlInput = NpcControlInput.IDLE
         controlActionId = null
         controlExpiresAt = Long.MIN_VALUE
-        pendingNavigation = null
-        navigationExpiresAt = Long.MIN_VALUE
+        navigationController.cancel(NpcActionCode.CANCELLED, "navigation stopped")
         navigation.stop()
         setXxa(0.0F)
         setZza(0.0F)
@@ -640,14 +685,13 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun attackEntity(entityUuid: UUID): NpcActionResult {
-        if (activeRangedAttack != null) {
-            return NpcActionResult.rejected("cancel the ranged attack before performing melee", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
+        if (rangedController.isActive || blockBreakController.isActive || isUsingItem) {
+            return NpcActionResult.rejected("finish the active hand action before performing melee", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
         }
         val target = resolveEntity(entityUuid) as? LivingEntity
             ?: return NpcActionResult.rejected("entity is unavailable in this dimension")
-        if (target.uuid == uuid) {
-            return NpcActionResult.rejected("NPC cannot attack itself")
-        }
+        val denied = NpcCombatRules.rejection(this, target)
+        if (denied != null) return denied
         if (!target.isAlive || target.level() != level()) {
             return NpcActionResult.rejected("entity is no longer attackable")
         }
@@ -703,9 +747,11 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
                 isSprinting = false
             }
         }
+        EnchantmentHelper.doPostHurtEffects(target, this)
+        EnchantmentHelper.doPostDamageEffects(this, target)
+        if (fireAspect > 0) target.setSecondsOnFire(fireAspect * 4)
         if (!level().isClientSide && !stack.isEmpty) {
-            // ItemStack.hurtEnemy and post-hit enchantment helpers require Player. Item's
-            // LivingEntity hook preserves ordinary weapon durability without a fake player.
+            // ItemStack's convenience wrapper requires Player; Item's hook accepts LivingEntity.
             damageMainHandAfterAttack(stack, target)
         }
         startVisibleSwing()
@@ -714,132 +760,23 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun startRangedAttack(entityUuid: UUID, hand: NpcHand): NpcActionResult {
-        if (activeRangedAttack != null) {
-            return NpcActionResult.rejected("NPC is already performing a ranged attack", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
+        if (blockBreakController.isActive || itemUseController.actionId != null) {
+            return NpcActionResult.rejected("cancel the conflicting block or held action before ranged use", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
         }
-        if (activeBlockBreak != null) {
-            return NpcActionResult.rejected("abort block breaking before starting a ranged attack", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
-        }
-        if (isUsingItem || activeItemUseActionId != null) {
-            return NpcActionResult.rejected("cancel the current item use before starting a ranged attack", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
-        }
-        val target = resolveEntity(entityUuid) as? LivingEntity
-            ?: return NpcActionResult.rejected("entity is unavailable in this dimension", NpcActionCode.NOT_FOUND, NpcActionChannel.COMBAT)
-        val targetRejection = validateRangedTarget(target)
-        if (targetRejection != null) {
-            return targetRejection
-        }
-        val interactionHand = hand.toInteractionHand()
-        val stack = getItemInHand(interactionHand)
-        val weapon = rangedWeaponKind(stack)
-            ?: return NpcActionResult.unsupported("${itemId(stack)} is not a supported ranged weapon", NpcActionChannel.COMBAT)
-        val resourceRejection = validateRangedResources(stack, weapon)
-        if (resourceRejection != null) {
-            return resourceRejection
-        }
-        if (weapon == NpcRangedWeaponKind.TRIDENT && EnchantmentHelper.getItemEnchantmentLevel(Enchantments.RIPTIDE, stack) > 0) {
-            return NpcActionResult.unsupported("Riptide requires Player travel semantics and cannot be applied to a dedicated NPC", NpcActionChannel.COMBAT)
-        }
-
-        aimAtRangedTarget(target)
-        val phase = if (weapon == NpcRangedWeaponKind.CROSSBOW && CrossbowItem.isCharged(stack)) {
-            NpcRangedAttackPhase.READY_TO_FIRE
-        } else {
-            NpcRangedAttackPhase.CHARGING
-        }
-        val requiredTicks = requiredRangedChargeTicks(stack, weapon, phase)
-        if (phase == NpcRangedAttackPhase.CHARGING) {
-            startUsingItem(interactionHand)
-        }
-        val actionId = UUID.randomUUID()
-        activeRangedAttack = ActiveRangedAttack(
-            actionId = actionId,
-            targetUuid = target.uuid,
-            hand = hand,
-            weapon = weapon,
-            phase = phase,
-            phaseStartedGameTime = level().gameTime,
-            requiredChargeTicks = requiredTicks,
-        )
-        return NpcActionResult.accepted(
-            "started ${weapon.name.lowercase()} attack against supplied entity",
-            actionId,
-            NpcActionChannel.COMBAT,
-        )
+        return rangedController.start(entityUuid, hand)
     }
 
-    override fun cancelRangedAttack(): NpcActionResult {
-        val action = activeRangedAttack
-            ?: return NpcActionResult.rejected("NPC is not performing a ranged attack", NpcActionCode.NOT_READY, NpcActionChannel.COMBAT)
-        val result = NpcActionResult.failed(
-            "ranged attack cancelled",
-            NpcActionCode.CANCELLED,
-            action.actionId,
-            NpcActionChannel.COMBAT,
-        )
-        finishRangedAttack(action, result)
-        return result
-    }
+    override fun cancelRangedAttack(): NpcActionResult = rangedController.cancel()
 
-    override fun pickupItem(itemEntityUuid: UUID): NpcActionResult {
-        val itemEntity = resolveEntity(itemEntityUuid) as? ItemEntity
-            ?: return NpcActionResult.rejected("item entity is unavailable in this dimension")
-        if (itemEntity.hasPickUpDelay()) {
-            return NpcActionResult.rejected("item entity cannot be picked up yet")
-        }
-        if (distanceToSqr(itemEntity) > PICKUP_REACH_SQR) {
-            return NpcActionResult.rejected("item entity is out of pickup reach")
-        }
-        val source = itemEntity.item
-        if (source.isEmpty) {
-            itemEntity.discard()
-            return NpcActionResult.rejected("item entity is empty")
-        }
-        val remaining = source.copy()
-        val pickedCount = insertIntoInventory(remaining)
-        if (pickedCount == 0) {
-            return NpcActionResult.rejected("NPC inventory has no room for ${itemId(source)}")
-        }
-        itemEntity.item = remaining
-        take(itemEntity, pickedCount)
-        level().playSound(
-            null,
-            x,
-            y,
-            z,
-            SoundEvents.ITEM_PICKUP,
-            SoundSource.PLAYERS,
-            PICKUP_SOUND_VOLUME,
-            ((random.nextFloat() - random.nextFloat()) * PICKUP_SOUND_VARIATION + PICKUP_SOUND_BASE_PITCH) * PICKUP_SOUND_PITCH_MULTIPLIER,
-        )
-        if (remaining.isEmpty) {
-            itemEntity.discard()
-        }
-        return NpcActionResult.succeeded("picked up $pickedCount ${itemId(source)}")
-    }
+    override fun pickupItem(itemEntityUuid: UUID): NpcActionResult = inventoryActions.pickupItem(itemEntityUuid)
 
-    override fun dropInventoryStack(slot: Int, count: Int): NpcActionResult {
-        if (slot !in inventory.indices) {
-            return NpcActionResult.rejected("inventory slot must be between 0 and ${INVENTORY_SIZE - 1}")
-        }
-        if (count <= 0) {
-            return NpcActionResult.rejected("drop count must be positive")
-        }
-        val source = inventory[slot]
-        if (source.isEmpty) {
-            return NpcActionResult.rejected("inventory slot $slot is empty")
-        }
-        val dropCount = minOf(count, source.count)
-        val dropped = source.copy()
-        dropped.count = dropCount
-        val itemEntity = ItemEntity(level(), x, y + DROP_HEIGHT_OFFSET, z, dropped)
-        if (!level().addFreshEntity(itemEntity)) {
-            return NpcActionResult.failed("could not spawn dropped item")
-        }
-        source.shrink(dropCount)
-        replaceInventoryStack(slot, source)
-        return NpcActionResult.succeeded("dropped $dropCount ${itemId(dropped)} from inventory slot $slot")
-    }
+    override fun dropInventoryStack(slot: Int, count: Int): NpcActionResult = inventoryActions.dropInventoryStack(slot, count)
+
+    override fun moveInventoryToBlockContainer(inventorySlot: Int, destination: NpcBlockContainerSlot, count: Int): NpcActionResult =
+        inventoryActions.moveInventoryToBlockContainer(inventorySlot, destination, count)
+
+    override fun moveBlockContainerToInventory(source: NpcBlockContainerSlot, count: Int): NpcActionResult =
+        inventoryActions.moveBlockContainerToInventory(source, count)
 
     override fun moveInventoryStack(sourceSlot: Int, destinationSlot: Int, count: Int): NpcActionResult {
         if (sourceSlot !in inventory.indices || destinationSlot !in inventory.indices) {
@@ -891,41 +828,15 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun startBlockBreak(position: NpcBlockPosition): NpcActionResult {
-        if (activeRangedAttack != null) {
-            return NpcActionResult.rejected("cancel the ranged attack before breaking a block", NpcActionCode.CONFLICT, NpcActionChannel.BLOCK_ACTION)
+        if (rangedController.isActive || isUsingItem) {
+            return NpcActionResult.rejected("cancel the conflicting ranged or item use before breaking a block", NpcActionCode.CONFLICT, NpcActionChannel.BLOCK_ACTION)
         }
-        if (activeBlockBreak != null) {
-            return NpcActionResult.rejected("NPC is already breaking a block", NpcActionCode.CONFLICT, NpcActionChannel.BLOCK_ACTION)
-        }
-        if (isUsingItem) {
-            return NpcActionResult.rejected("cancel item use before breaking a block", NpcActionCode.CONFLICT, NpcActionChannel.BLOCK_ACTION)
-        }
-        val blockPos = BlockPos(position.x, position.y, position.z)
-        val state = level().getBlockState(blockPos)
-        val rejection = validateBlockBreak(blockPos, state)
-        if (rejection != null) {
-            return rejection
-        }
-        val toolRejection = prepareMiningTool(state)
-        if (toolRejection != null) {
-            return toolRejection
-        }
-        val actionId = UUID.randomUUID()
-        activeBlockBreak = ActiveBlockBreak(actionId, blockPos, 0.0F)
-        publishBlockBreakProgress(blockPos, 0)
-        startVisibleSwing()
-        return NpcActionResult.accepted("started breaking ${state.block.descriptionId} at ${position.x}, ${position.y}, ${position.z}", actionId, NpcActionChannel.BLOCK_ACTION)
+        return blockBreakController.start(position)
     }
 
-    override fun continueBlockBreak(): NpcActionResult =
-        activeBlockBreak?.let { NpcActionResult.running("block break is in progress", it.actionId, NpcActionChannel.BLOCK_ACTION) }
-            ?: NpcActionResult.rejected("NPC is not breaking a block", NpcActionCode.NOT_READY, NpcActionChannel.BLOCK_ACTION)
+    override fun continueBlockBreak(): NpcActionResult = blockBreakController.renew()
 
-    override fun abortBlockBreak(): NpcActionResult {
-        val action = activeBlockBreak ?: return NpcActionResult.rejected("NPC is not breaking a block", NpcActionCode.NOT_READY, NpcActionChannel.BLOCK_ACTION)
-        clearBlockBreak(action, NpcActionResult.failed("block break cancelled", NpcActionCode.CANCELLED, action.actionId, NpcActionChannel.BLOCK_ACTION))
-        return NpcActionResult.succeeded("aborted block break", action.actionId, NpcActionChannel.BLOCK_ACTION)
-    }
+    override fun abortBlockBreak(): NpcActionResult = blockBreakController.cancel()
 
     /**
      * Held items with a vanilla duration (food, drink, shields and similar items) use the same
@@ -933,7 +844,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * are reported as unsupported instead of passing a counterfeit player to mod code.
      */
     override fun useItemInAir(hand: NpcHand): NpcActionResult {
-        if (activeRangedAttack != null) {
+        if (rangedController.isActive) {
             return NpcActionResult.rejected("cancel the ranged attack before using another item", NpcActionCode.CONFLICT, hand.actionChannel())
         }
         val stack = getItemInHand(hand.toInteractionHand())
@@ -969,7 +880,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * rejected explicitly rather than impersonating a ServerPlayer.
      */
     override fun useItemOnBlock(hit: NpcBlockHit, hand: NpcHand): NpcActionResult {
-        if (activeRangedAttack != null) {
+        if (rangedController.isActive) {
             return NpcActionResult.rejected("cancel the ranged attack before using an item on a block", NpcActionCode.CONFLICT, NpcActionChannel.INTERACTION)
         }
         if (isUsingItem) {
@@ -997,8 +908,8 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             // contained and explicit; a dedicated NPC may not substitute a fake ServerPlayer.
             return NpcActionResult.unsupported("${itemId(stack)} requires a real Player for block use", NpcActionChannel.INTERACTION)
         }
-        if (result == InteractionResult.PASS) {
-            return NpcActionResult.rejected("${itemId(stack)} did not handle the supplied block hit", NpcActionCode.WORLD_REJECTED, NpcActionChannel.INTERACTION)
+        if (!result.consumesAction()) {
+            return NpcActionResult.rejected("${itemId(stack)} did not accept the supplied block hit", NpcActionCode.WORLD_REJECTED, NpcActionChannel.INTERACTION)
         }
         if (interactionHand == InteractionHand.MAIN_HAND) {
             refreshMainHandAttributes()
@@ -1114,161 +1025,51 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         return NpcActionResult.succeeded("used ${state.block.descriptionId}")
     }
 
-    override fun moveInventoryToBlockContainer(inventorySlot: Int, destination: NpcBlockContainerSlot, count: Int): NpcActionResult {
-        if (inventorySlot !in inventory.indices) {
-            return NpcActionResult.rejected("inventory slot must be between 0 and ${INVENTORY_SIZE - 1}")
-        }
-        if (count <= 0) {
-            return NpcActionResult.rejected("transfer count must be positive")
-        }
-        val source = inventory[inventorySlot]
-        if (source.isEmpty) {
-            return NpcActionResult.rejected("inventory slot $inventorySlot is empty")
-        }
-        val container = resolveBlockContainer(destination.position) ?: return NpcActionResult.rejected("no usable block container at supplied position")
-        if (destination.slot !in 0 until container.containerSize) {
-            return NpcActionResult.rejected("container slot is out of bounds")
-        }
-        if (!container.canPlaceItem(destination.slot, source)) {
-            return NpcActionResult.rejected("container rejected this item")
-        }
-        val target = container.getItem(destination.slot)
-        if (!target.isEmpty && !ItemStack.isSameItemSameTags(source, target)) {
-            return NpcActionResult.rejected("container slot holds a different item")
-        }
-        val capacity = if (target.isEmpty) minOf(container.maxStackSize, source.maxStackSize) else minOf(container.maxStackSize, target.maxStackSize) - target.count
-        val transfer = minOf(count, source.count, capacity)
-        if (transfer <= 0) {
-            return NpcActionResult.rejected("container slot has no free capacity")
-        }
-        val placed = if (target.isEmpty) source.copy() else target.copy()
-        placed.count = if (target.isEmpty) transfer else target.count + transfer
-        container.setItem(destination.slot, placed)
-        container.setChanged()
-        source.shrink(transfer)
-        replaceInventoryStack(inventorySlot, source)
-        return NpcActionResult.succeeded("moved $transfer ${itemId(placed)} to block container")
-    }
-
-    override fun moveBlockContainerToInventory(source: NpcBlockContainerSlot, count: Int): NpcActionResult {
-        if (count <= 0) {
-            return NpcActionResult.rejected("transfer count must be positive")
-        }
-        val container = resolveBlockContainer(source.position) ?: return NpcActionResult.rejected("no usable block container at supplied position")
-        if (source.slot !in 0 until container.containerSize) {
-            return NpcActionResult.rejected("container slot is out of bounds")
-        }
-        val stack = container.getItem(source.slot)
-        if (stack.isEmpty) {
-            return NpcActionResult.rejected("container slot is empty")
-        }
-        val proposed = stack.copy()
-        proposed.count = minOf(count, stack.count)
-        val accepted = insertIntoInventory(proposed)
-        if (accepted <= 0) {
-            return NpcActionResult.rejected("NPC inventory has no room for ${itemId(stack)}")
-        }
-        stack.shrink(accepted)
-        container.setItem(source.slot, stack)
-        container.setChanged()
-        return NpcActionResult.succeeded("moved $accepted ${itemId(proposed)} from block container")
-    }
-
     override fun startItemUse(hand: NpcHand): NpcActionResult {
-        if (activeRangedAttack != null) {
-            return NpcActionResult.rejected("cancel the ranged attack before starting independent item use", NpcActionCode.CONFLICT, hand.actionChannel())
+        if (rangedController.isActive || blockBreakController.isActive) {
+            return NpcActionResult.rejected("cancel the conflicting ranged or block action before using an item", NpcActionCode.CONFLICT, hand.actionChannel())
         }
-        if (isUsingItem) {
-            return NpcActionResult.rejected("NPC is already using an item", NpcActionCode.CONFLICT, hand.actionChannel())
-        }
-        val interactionHand = hand.toInteractionHand()
-        val stack = getItemInHand(interactionHand)
-        if (stack.isEmpty) {
-            return NpcActionResult.rejected("${hand.name.lowercase()} hand is empty", NpcActionCode.NOT_READY, hand.actionChannel())
-        }
-        val duration = stack.useDuration
-        if (duration <= 0) {
-            return NpcActionResult.unsupported("${itemId(stack)} has no held-use lifecycle", hand.actionChannel())
-        }
-        // A dedicated Mob cannot invoke Item.use(), whose contract requires a real Player.
-        // LivingEntity's held-use lifecycle still runs vanilla tick, finish, and release hooks.
-        startUsingItem(interactionHand)
-        val actionId = UUID.randomUUID()
-        activeItemUseActionId = actionId
-        activeItemUseChannel = hand.actionChannel()
-        return NpcActionResult.accepted("started using ${itemId(stack)} in ${hand.name.lowercase()} hand", actionId, activeItemUseChannel)
+        return itemUseController.start(hand)
     }
 
-    override fun continueItemUse(): NpcActionResult =
-        if (isUsingItem) NpcActionResult.running("item use is in progress", activeItemUseActionId, usedItemHand.toNpcHand().actionChannel())
-        else NpcActionResult.rejected("NPC is not using an item", NpcActionCode.NOT_READY)
+    override fun continueItemUse(): NpcActionResult {
+        if (rangedController.isActive) return rangedController.continuation()
+        return itemUseController.renew()
+    }
 
     override fun releaseItemUse(): NpcActionResult {
-        val ranged = activeRangedAttack
-        if (ranged != null) {
-            return releaseRangedAttackPhase(ranged, forced = true)
+        if (rangedController.isActive) return rangedController.release()
+        val invalid = itemUseController.beforeTick()
+        if (invalid != null) return invalid
+        if (!isUsingItem) return NpcActionResult.rejected("NPC is not using an item", NpcActionCode.NOT_READY)
+        val stack = useItem
+        val hand = usedItemHand
+        val result = when (stack.item) {
+            is BowItem, is CrossbowItem, is TridentItem -> rangedController.releaseHeld(stack, ticksUsingItem, hand)
+            else -> {
+                val consumable = stack.useAnimation == net.minecraft.world.item.UseAnim.EAT ||
+                    stack.useAnimation == net.minecraft.world.item.UseAnim.DRINK
+                releaseUsingItem()
+                if (consumable) NpcActionResult.failed("consumable use released before completion", NpcActionCode.CANCELLED)
+                else NpcActionResult.succeeded("released held item use")
+            }
         }
-        if (!isUsingItem) {
-            return NpcActionResult.rejected("NPC is not using an item", NpcActionCode.NOT_READY)
-        }
-        val actionId = activeItemUseActionId
-        val channel = usedItemHand.toNpcHand().actionChannel()
-        if (useItem.item is BowItem) {
-            val result = releaseBow(useItem, ticksUsingItem, usedItemHand)
-            stopUsingItem()
-            activeItemUseActionId = null
-            activeItemUseChannel = null
-            val completed = result.copy(actionId = actionId, channel = channel)
-            completeAction(completed)
-            return completed
-        }
-        if (useItem.item is CrossbowItem) {
-            val result = releaseCrossbow(useItem, ticksUsingItem, usedItemHand)
-            stopUsingItem()
-            activeItemUseActionId = null
-            activeItemUseChannel = null
-            val completed = result.copy(actionId = actionId, channel = channel)
-            completeAction(completed)
-            return completed
-        }
-        if (useItem.item is TridentItem) {
-            val result = releaseTrident(useItem, ticksUsingItem, usedItemHand)
-            stopUsingItem()
-            activeItemUseActionId = null
-            activeItemUseChannel = null
-            val completed = result.copy(actionId = actionId, channel = channel)
-            completeAction(completed)
-            return completed
-        }
-        releaseUsingItem()
-        activeItemUseActionId = null
-        activeItemUseChannel = null
-        val completed = NpcActionResult.succeeded("released item use", actionId, channel)
-        completeAction(completed)
-        return completed
+        stopUsingItem()
+        return itemUseController.finish(result)
     }
 
     override fun cancelItemUse(): NpcActionResult {
-        if (activeRangedAttack != null) {
-            return cancelRangedAttack()
-        }
-        if (!isUsingItem) {
-            return NpcActionResult.rejected("NPC is not using an item", NpcActionCode.NOT_READY)
-        }
-        val actionId = activeItemUseActionId
-        val channel = usedItemHand.toNpcHand().actionChannel()
-        stopUsingItem()
-        activeItemUseActionId = null
-        activeItemUseChannel = null
-        val completed = NpcActionResult.failed("cancelled item use", NpcActionCode.CANCELLED, actionId, channel)
-        completeAction(completed)
-        return completed
+        if (rangedController.isActive) return cancelRangedAttack()
+        return itemUseController.cancel()
     }
+
+    internal fun finishItemUseByVanilla(itemBeforeUse: ItemStack, resultStack: ItemStack): ItemStack =
+        itemUseController.markVanillaFinish(itemBeforeUse, resultStack)
 
     private fun applyControlInput() {
         // PathNavigation owns Mob's MoveControl and speed while a caller is renewing a route.
         // Applying the idle direct-control input here would reset that speed before every AI tick.
-        if (pendingNavigation != null) {
+        if (navigationController.isActive) {
             setXxa(0.0F)
             setZza(0.0F)
             setShiftKeyDown(false)
@@ -1299,20 +1100,6 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         deltaMovement = Vec3(0.0, deltaMovement.y, 0.0)
     }
 
-    /** Native navigation is a low-level movement mechanism; it has no autonomous destination. */
-    private fun advanceNavigation() {
-        val request = pendingNavigation ?: return
-        if (level().gameTime > navigationExpiresAt) {
-            pendingNavigation = null
-            navigationExpiresAt = Long.MIN_VALUE
-            navigation.stop()
-            return
-        }
-        if (navigation.isDone) {
-            navigation.moveTo(request.position.x, request.position.y, request.position.z, request.speedMultiplier.toDouble())
-        }
-    }
-
     private fun expireControlIfNeeded() {
         val actionId = controlActionId ?: return
         if (level().gameTime <= controlExpiresAt) {
@@ -1321,8 +1108,6 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         controlInput = NpcControlInput.IDLE
         controlActionId = null
         controlExpiresAt = Long.MIN_VALUE
-        pendingNavigation = null
-        navigationExpiresAt = Long.MIN_VALUE
         navigation.stop()
         setXxa(0.0F)
         setZza(0.0F)
@@ -1339,188 +1124,10 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         )
     }
 
-    /**
-     * Player inventory pickup is a contact mechanic, not a goal. Core never walks toward loot and
-     * never equips it, but an ItemEntity entering the normal personal pickup envelope is inserted
-     * into the authoritative 36-slot inventory just as it would be for a nearby player.
-     */
-    private fun vacuumNearbyItems() {
-        if (!isAlive) {
-            return
-        }
-        val nearby = level().getEntitiesOfClass(ItemEntity::class.java, boundingBox.inflate(PASSIVE_PICKUP_RADIUS))
-            .asSequence()
-            .filter { item -> !item.hasPickUpDelay() && !item.item.isEmpty }
-            .sortedWith(compareBy<ItemEntity>({ distanceToSqr(it) }, { it.id }))
-            .take(MAX_PASSIVE_PICKUPS_PER_TICK)
-            .toList()
-        for (item in nearby) {
-            pickupItem(item.uuid)
-        }
-    }
-
-    private fun advanceRangedAttack() {
-        val action = activeRangedAttack ?: return
-        val target = resolveEntity(action.targetUuid) as? LivingEntity
-        if (target == null) {
-            finishRangedAttack(
-                action,
-                NpcActionResult.failed("ranged target is no longer loaded", NpcActionCode.NOT_FOUND, action.actionId, NpcActionChannel.COMBAT),
-            )
-            return
-        }
-        val targetRejection = validateRangedTarget(target)
-        if (targetRejection != null) {
-            finishRangedAttack(
-                action,
-                NpcActionResult.failed(targetRejection.detail, targetRejection.code, action.actionId, NpcActionChannel.COMBAT),
-            )
-            return
-        }
-        val stack = getItemInHand(action.hand.toInteractionHand())
-        if (rangedWeaponKind(stack) != action.weapon) {
-            finishRangedAttack(
-                action,
-                NpcActionResult.failed("ranged weapon changed while the action was active", NpcActionCode.CONFLICT, action.actionId, NpcActionChannel.COMBAT),
-            )
-            return
-        }
-        aimAtRangedTarget(target)
-        val elapsed = rangedPhaseElapsedTicks(action)
-        if (action.phase == NpcRangedAttackPhase.CHARGING && elapsed < action.requiredChargeTicks) {
-            return
-        }
-        releaseRangedAttackPhase(action, forced = false)
-    }
-
-    private fun releaseRangedAttackPhase(action: ActiveRangedAttack, forced: Boolean): NpcActionResult {
-        if (activeRangedAttack !== action) {
-            return NpcActionResult.rejected("ranged action is no longer active", NpcActionCode.NOT_READY, NpcActionChannel.COMBAT)
-        }
-        val target = resolveEntity(action.targetUuid) as? LivingEntity
-        if (target == null) {
-            val failed = NpcActionResult.failed("ranged target is no longer loaded", NpcActionCode.NOT_FOUND, action.actionId, NpcActionChannel.COMBAT)
-            finishRangedAttack(action, failed)
-            return failed
-        }
-        aimAtRangedTarget(target)
-        val elapsed = rangedPhaseElapsedTicks(action)
-        if (!forced && action.phase == NpcRangedAttackPhase.CHARGING && elapsed < action.requiredChargeTicks) {
-            return NpcActionResult.running("ranged weapon is still charging", action.actionId, NpcActionChannel.COMBAT)
-        }
-        val hand = action.hand.toInteractionHand()
-        val stack = getItemInHand(hand)
-        val result = when (action.weapon) {
-            NpcRangedWeaponKind.BOW -> releaseBow(stack, elapsed, hand)
-            NpcRangedWeaponKind.TRIDENT -> releaseTrident(stack, elapsed, hand)
-            NpcRangedWeaponKind.CROSSBOW -> releaseCrossbow(stack, elapsed, hand)
-        }
-
-        if (action.weapon == NpcRangedWeaponKind.CROSSBOW && action.phase == NpcRangedAttackPhase.CHARGING && result.status == NpcActionStatus.SUCCEEDED && CrossbowItem.isCharged(stack)) {
-            if (isUsingItem) {
-                stopUsingItem()
-            }
-            action.phase = NpcRangedAttackPhase.READY_TO_FIRE
-            action.phaseStartedGameTime = level().gameTime
-            action.requiredChargeTicks = 0
-            return NpcActionResult.running("crossbow loaded and ready to fire", action.actionId, NpcActionChannel.COMBAT)
-        }
-
-        val terminal = result.copy(actionId = action.actionId, channel = NpcActionChannel.COMBAT)
-        finishRangedAttack(action, terminal)
-        return terminal
-    }
-
-    private fun finishRangedAttack(action: ActiveRangedAttack, result: NpcActionResult) {
-        if (activeRangedAttack !== action) {
-            return
-        }
-        if (isUsingItem && usedItemHand == action.hand.toInteractionHand()) {
-            stopUsingItem()
-        }
-        activeRangedAttack = null
-        completeAction(result.copy(actionId = action.actionId, channel = NpcActionChannel.COMBAT))
-    }
-
-    private fun validateRangedTarget(target: LivingEntity): NpcActionResult? {
-        if (target.uuid == uuid) {
-            return NpcActionResult.rejected("NPC cannot attack itself", NpcActionCode.INVALID_REQUEST, NpcActionChannel.COMBAT)
-        }
-        if (!target.isAlive || target.level() != level()) {
-            return NpcActionResult.rejected("entity is no longer attackable", NpcActionCode.NOT_FOUND, NpcActionChannel.COMBAT)
-        }
-        if (distanceToSqr(target) > RANGED_REACH_SQR) {
-            return NpcActionResult.rejected("ranged target is out of supported reach", NpcActionCode.OUT_OF_RANGE, NpcActionChannel.COMBAT)
-        }
-        if (!hasLineOfSight(target)) {
-            return NpcActionResult.rejected("ranged target is not visible", NpcActionCode.WORLD_REJECTED, NpcActionChannel.COMBAT)
-        }
-        return null
-    }
-
-    private fun validateRangedResources(stack: ItemStack, weapon: NpcRangedWeaponKind): NpcActionResult? = when (weapon) {
-        NpcRangedWeaponKind.BOW -> if (findArrowAmmunition() == null) {
-            NpcActionResult.rejected("bow requires an arrow in the ammunition reserve or NPC inventory", NpcActionCode.MISSING_RESOURCE, NpcActionChannel.COMBAT)
-        } else {
-            null
-        }
-        NpcRangedWeaponKind.CROSSBOW -> if (!CrossbowItem.isCharged(stack) && findArrowAmmunition() == null) {
-            NpcActionResult.rejected("crossbow requires an arrow in the ammunition reserve or NPC inventory", NpcActionCode.MISSING_RESOURCE, NpcActionChannel.COMBAT)
-        } else {
-            null
-        }
-        NpcRangedWeaponKind.TRIDENT -> null
-    }
-
-    private fun rangedWeaponKind(stack: ItemStack): NpcRangedWeaponKind? = when (stack.item) {
-        is BowItem -> NpcRangedWeaponKind.BOW
-        is CrossbowItem -> NpcRangedWeaponKind.CROSSBOW
-        is TridentItem -> NpcRangedWeaponKind.TRIDENT
-        else -> null
-    }
-
-    private fun requiredRangedChargeTicks(
-        stack: ItemStack,
-        weapon: NpcRangedWeaponKind,
-        phase: NpcRangedAttackPhase,
-    ): Int = when {
-        phase == NpcRangedAttackPhase.READY_TO_FIRE -> 0
-        weapon == NpcRangedWeaponKind.BOW -> BOW_FULL_CHARGE_TICKS
-        weapon == NpcRangedWeaponKind.CROSSBOW -> crossbowChargeTicks(stack)
-        else -> MIN_TRIDENT_CHARGE_TICKS
-    }
-
-    private fun aimAtRangedTarget(target: LivingEntity) {
-        val origin = eyePosition
-        val destination = target.eyePosition
-        val dx = destination.x - origin.x
-        val dy = destination.y - origin.y
-        val dz = destination.z - origin.z
-        val horizontal = sqrt(dx * dx + dz * dz)
-        val yaw = Math.toDegrees(atan2(dz, dx)).toFloat() - 90.0F
-        val pitch = -Math.toDegrees(atan2(dy, horizontal)).toFloat()
-        setLookRotation(NpcLookRotation(yaw, pitch))
-    }
-
-    private fun rangedPhaseElapsedTicks(action: ActiveRangedAttack): Int =
-        (level().gameTime - action.phaseStartedGameTime).coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-
-    private fun completeNaturallyFinishedItemUse() {
-        val actionId = activeItemUseActionId ?: return
-        if (isUsingItem) {
-            return
-        }
-        activeItemUseActionId = null
-        val channel = activeItemUseChannel ?: NpcActionChannel.MAIN_HAND
-        activeItemUseChannel = null
-        completeAction(NpcActionResult.succeeded("item use completed", actionId, channel))
-    }
-
     /** Every accepted long-running action gets a terminal result when this entity leaves runtime. */
     private fun cancelActiveActionsForRemoval(state: NpcLifecycleState) {
         val detail = "action cancelled because NPC became ${state.name.lowercase()}"
-        pendingNavigation = null
-        navigationExpiresAt = Long.MIN_VALUE
+        navigationController.cancel(NpcActionCode.CANCELLED, detail)
         navigation.stop()
         val controlId = controlActionId
         if (controlId != null) {
@@ -1530,31 +1137,9 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             navigation.stop()
             completeAction(NpcActionResult.failed(detail, NpcActionCode.CANCELLED, controlId, NpcActionChannel.LOCOMOTION))
         }
-        val rangedAction = activeRangedAttack
-        if (rangedAction != null) {
-            if (isUsingItem && usedItemHand == rangedAction.hand.toInteractionHand()) {
-                stopUsingItem()
-            }
-            activeRangedAttack = null
-            completeAction(NpcActionResult.failed(detail, NpcActionCode.CANCELLED, rangedAction.actionId, NpcActionChannel.COMBAT))
-        }
-        val itemActionId = activeItemUseActionId
-        if (itemActionId != null) {
-            val channel = activeItemUseChannel ?: NpcActionChannel.MAIN_HAND
-            if (isUsingItem) {
-                stopUsingItem()
-            }
-            activeItemUseActionId = null
-            activeItemUseChannel = null
-            completeAction(NpcActionResult.failed(detail, NpcActionCode.CANCELLED, itemActionId, channel))
-        }
-        val blockAction = activeBlockBreak
-        if (blockAction != null) {
-            clearBlockBreak(
-                blockAction,
-                NpcActionResult.failed(detail, NpcActionCode.CANCELLED, blockAction.actionId, NpcActionChannel.BLOCK_ACTION),
-            )
-        }
+        rangedController.cancel(detail)
+        itemUseController.cancel(detail)
+        blockBreakController.cancel(detail)
     }
 
     private fun itemUseState(): NpcItemUseState? {
@@ -1571,239 +1156,12 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             itemId = itemId(stack),
             remainingTicks = remainingTicks,
             elapsedTicks = (stack.useDuration - remainingTicks).coerceAtLeast(0),
+            actionId = rangedController.actionId ?: itemUseController.actionId,
+            leaseExpiresAt = itemUseController.expiresAt,
         )
     }
 
-    private fun rangedAttackState(): NpcRangedAttackState? {
-        val action = activeRangedAttack ?: return null
-        return NpcRangedAttackState(
-            targetUuid = action.targetUuid,
-            hand = action.hand,
-            weapon = action.weapon,
-            phase = action.phase,
-            elapsedTicks = rangedPhaseElapsedTicks(action),
-            requiredChargeTicks = action.requiredChargeTicks,
-        )
-    }
-
-    private fun blockBreakState(): NpcBlockBreakState? {
-        val action = activeBlockBreak ?: return null
-        return NpcBlockBreakState(
-            position = NpcBlockPosition(action.position.x, action.position.y, action.position.z),
-            progress = action.progress,
-            stage = NpcBlockBreakMath.stage(action.progress),
-            toolItemId = NpcItemClassifier.profile(mainHandItem).itemId,
-        )
-    }
-
-    private fun advanceBlockBreak() {
-        val action = activeBlockBreak ?: return
-        val state = level().getBlockState(action.position)
-        // A player-like strike is admitted only after a full eye-ray check in startBlockBreak.
-        // Once admitted, small collision/nav settling movements must not cancel it because a
-        // leaf or the trunk edge briefly crosses the eye ray. A one-tick physics settle can also
-        // move its feet just beyond the strict start envelope. Keep the authoritative world,
-        // tool and Forge-hook checks below, use a deliberately small active-only reach grace,
-        // and do not re-run the transient LOS gate.
-        val activeValidation = validateBlockBreak(
-            action.position,
-            state,
-            requireLineOfSight = false,
-            maxReachSqr = BLOCK_BREAK_ACTIVE_REACH_SQR,
-        )
-        if (activeValidation != null) {
-            clearBlockBreak(
-                action,
-                NpcActionResult.failed(
-                    "block break became invalid: ${activeValidation.detail}",
-                    activeValidation.code,
-                    action.actionId,
-                    NpcActionChannel.BLOCK_ACTION,
-                ),
-            )
-            return
-        }
-        val tool = mainHandItem
-        val toolRejection = validateHeldMiningTool(state, tool)
-        if (toolRejection != null) {
-            clearBlockBreak(
-                action,
-                NpcActionResult.failed(toolRejection.detail, toolRejection.code, action.actionId, NpcActionChannel.BLOCK_ACTION),
-            )
-            return
-        }
-        val progress = NpcBlockBreakMath.progressPerTick(
-            toolSpeed = miningToolSpeed(state, tool),
-            hardness = state.getDestroySpeed(level(), action.position),
-            canHarvest = NpcMiningSpeed.canHarvest(state.requiresCorrectToolForDrops(), tool.isCorrectToolForDrops(state)),
-        )
-        if (progress <= 0.0F) {
-            clearBlockBreak(
-                action,
-                NpcActionResult.failed("held tool cannot make block-break progress", NpcActionCode.WORLD_REJECTED, action.actionId, NpcActionChannel.BLOCK_ACTION),
-            )
-            return
-        }
-        action.progress += progress
-        if (level().gameTime % BREAK_SWING_INTERVAL == 0L) {
-            startVisibleSwing()
-        }
-        if (action.progress < 1.0F) {
-            publishBlockBreakProgress(action.position, NpcBlockBreakMath.stage(action.progress))
-            return
-        }
-        completeBlockBreak(action, state, tool)
-    }
-
-    private fun completeBlockBreak(action: ActiveBlockBreak, state: BlockState, tool: ItemStack) {
-        val serverLevel = level() as? ServerLevel
-        val canHarvest = NpcMiningSpeed.canHarvest(state.requiresCorrectToolForDrops(), tool.isCorrectToolForDrops(state))
-        if (serverLevel == null || !serverLevel.destroyBlock(action.position, canHarvest, this)) {
-            clearBlockBreak(
-                action,
-                NpcActionResult.failed("world rejected block break", NpcActionCode.WORLD_REJECTED, action.actionId, NpcActionChannel.BLOCK_ACTION),
-            )
-            return
-        }
-        if (!tool.isEmpty && NpcToolDurability.perform(tool) { tool.item.mineBlock(tool, serverLevel, state, action.position, this) }) {
-            // Item.mineBlock owns durability for vanilla tools. Calling hurtAndBreak here as well
-            // double-damaged tools after every successful block break.
-            refreshMainHandAttributes()
-        }
-        startVisibleSwing()
-        clearBlockBreak(
-            action,
-            NpcActionResult.succeeded("block break completed", action.actionId, NpcActionChannel.BLOCK_ACTION),
-        )
-    }
-
-    private fun validateBlockBreak(
-        position: BlockPos,
-        state: BlockState,
-        requireLineOfSight: Boolean = true,
-        maxReachSqr: Double = BLOCK_BREAK_REACH_SQR,
-    ): NpcActionResult? {
-        if (state.isAir) {
-            return NpcActionResult.rejected("block is already air")
-        }
-        if (state.getDestroySpeed(level(), position) < 0.0F) {
-            return NpcActionResult.rejected("block is unbreakable")
-        }
-        if (distanceToSqr(position.center) > maxReachSqr) {
-            return NpcActionResult.rejected("block is out of break reach", NpcActionCode.OUT_OF_RANGE)
-        }
-        if (requireLineOfSight) {
-            val sight = level().clip(
-                ClipContext(
-                    eyePosition,
-                    position.center,
-                    ClipContext.Block.OUTLINE,
-                    ClipContext.Fluid.NONE,
-                    this,
-                ),
-            )
-            if (sight.type == HitResult.Type.BLOCK && sight.blockPos != position) {
-                return NpcActionResult.rejected("block is not visible from the NPC eye position", NpcActionCode.WORLD_REJECTED)
-            }
-        }
-        if (!ForgeHooks.canEntityDestroy(level(), position, this)) {
-            return NpcActionResult.rejected("block break was denied by world rules or a Forge hook")
-        }
-        return null
-    }
-
-    /**
-     * Select the fastest carried tool for this exact supplied block. This does not choose a task or
-     * resource. Strict tool requirements remain the default; the two explicit configuration
-     * exceptions permit ordinary hand mining without changing the caller's supplied target.
-     */
-    private fun prepareMiningTool(state: BlockState): NpcActionResult? {
-        if (NpcSettingsConfig.enabled(NpcSetting.BARE_HANDS_ONLY)) return prepareEmptyMiningHand()
-        val requiresCorrect = state.requiresCorrectToolForDrops()
-        val requiresEffective = requiresEffectiveMiningTool(state)
-        val candidates = inventory.indices.mapNotNull { slot ->
-            val stack = inventory[slot]
-            if (stack.isEmpty) {
-                return@mapNotNull null
-            }
-            NpcMiningToolSelector.Candidate(
-                slot = slot,
-                destroySpeed = stack.getDestroySpeed(state),
-                correctForDrops = stack.isCorrectToolForDrops(state),
-                remainingDurability = if (stack.isDamageableItem) stack.maxDamage - stack.damageValue else Int.MAX_VALUE,
-                currentlySelected = slot == selectedHotbarSlot,
-            )
-        }
-        val chosen = NpcMiningToolSelector.choose(candidates, requiresCorrect, requiresEffective)
-        if (chosen == null) {
-            if (NpcSettingsConfig.enabled(NpcSetting.IGNORE_MISSING_TOOL)) return prepareEmptyMiningHand()
-            return if (requiresEffective) {
-                NpcActionResult.rejected(
-                    "NPC carries no suitable tool for ${state.block.descriptionId}",
-                    NpcActionCode.UNSUITABLE_TOOL,
-                    NpcActionChannel.BLOCK_ACTION,
-                )
-            } else {
-                null
-            }
-        }
-        if (chosen.slot != selectedHotbarSlot) {
-            val previous = inventory[selectedHotbarSlot]
-            inventory[selectedHotbarSlot] = inventory[chosen.slot]
-            inventory[chosen.slot] = previous
-            refreshMainHandAttributes()
-        }
-        return validateHeldMiningTool(state, mainHandItem)
-    }
-
-    private fun validateHeldMiningTool(state: BlockState, tool: ItemStack): NpcActionResult? {
-        val bareHands = NpcSettingsConfig.enabled(NpcSetting.BARE_HANDS_ONLY)
-        if (tool.isEmpty && (bareHands || NpcSettingsConfig.enabled(NpcSetting.IGNORE_MISSING_TOOL))) return null
-        if (bareHands) return NpcActionResult.rejected("bare-hands block work requires an empty selected hand", NpcActionCode.UNSUITABLE_TOOL)
-        val requiresCorrect = state.requiresCorrectToolForDrops()
-        if (requiresCorrect && (tool.isEmpty || !tool.isCorrectToolForDrops(state))) {
-            return NpcActionResult.rejected(
-                "held item is not the correct harvesting tool for ${state.block.descriptionId}",
-                NpcActionCode.UNSUITABLE_TOOL,
-                NpcActionChannel.BLOCK_ACTION,
-            )
-        }
-        if (requiresEffectiveMiningTool(state) && (tool.isEmpty || tool.getDestroySpeed(state) <= NpcMiningToolSelector.HAND_DESTROY_SPEED)) {
-            return NpcActionResult.rejected(
-                "held item is not an effective mining tool for ${state.block.descriptionId}",
-                NpcActionCode.UNSUITABLE_TOOL,
-                NpcActionChannel.BLOCK_ACTION,
-            )
-        }
-        return null
-    }
-
-    private fun requiresEffectiveMiningTool(state: BlockState): Boolean {
-        // Foliage is intentionally breakable with the currently held item. Vanilla may tag it as
-        // hoe-mineable, but a player with an axe may still clear a sight line without first
-        // obtaining a hoe. This remains a mechanical rule for the exact caller-supplied block;
-        // it does not choose foliage or navigation policy.
-        if (state.`is`(BlockTags.LEAVES)) {
-            return false
-        }
-        return state.requiresCorrectToolForDrops() ||
-            state.`is`(BlockTags.MINEABLE_WITH_PICKAXE) ||
-            state.`is`(BlockTags.MINEABLE_WITH_AXE) ||
-            state.`is`(BlockTags.MINEABLE_WITH_SHOVEL) ||
-            state.`is`(BlockTags.MINEABLE_WITH_HOE)
-    }
-
-    private fun miningToolSpeed(state: BlockState, tool: ItemStack): Float =
-        NpcMiningSpeed.effectiveToolSpeed(
-            baseToolSpeed = tool.getDestroySpeed(state),
-            efficiencyLevel = EnchantmentHelper.getItemEnchantmentLevel(Enchantments.BLOCK_EFFICIENCY, tool),
-            hasteAmplifier = getEffect(net.minecraft.world.effect.MobEffects.DIG_SPEED)?.amplifier,
-            fatigueAmplifier = getEffect(net.minecraft.world.effect.MobEffects.DIG_SLOWDOWN)?.amplifier,
-            underwaterWithoutAquaAffinity = isEyeInFluid(FluidTags.WATER) && !EnchantmentHelper.hasAquaAffinity(this),
-            airborne = !onGround(),
-        )
-
-    private fun resolveBlockContainer(position: NpcBlockPosition): Container? {
+    internal fun resolveBlockContainer(position: NpcBlockPosition): Container? {
         val blockPos = BlockPos(position.x, position.y, position.z)
         if (distanceToSqr(blockPos.center) > BLOCK_INTERACTION_REACH_SQR) {
             return null
@@ -1811,25 +1169,13 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         return NpcBlockContainers.resolve(level(), blockPos)
     }
 
-    private fun publishBlockBreakProgress(position: BlockPos, stage: Int) {
-        (level() as? ServerLevel)?.destroyBlockProgress(id, position, stage)
-    }
-
     /** Keep the vanilla animate packet path, with tracked state as a late-client fallback. */
-    private fun startVisibleSwing() {
+    internal fun startVisibleSwing() {
         swing(InteractionHand.MAIN_HAND, true)
         if (!level().isClientSide) {
             val current = entityData.get(DATA_SWING_SEQUENCE)
             val next = if (current == Int.MAX_VALUE) 0 else current + 1
             entityData.set(DATA_SWING_SEQUENCE, next)
-        }
-    }
-
-    private fun clearBlockBreak(action: ActiveBlockBreak, completion: NpcActionResult?) {
-        publishBlockBreakProgress(action.position, -1)
-        activeBlockBreak = null
-        if (completion != null) {
-            completeAction(completion)
         }
     }
 
@@ -1841,16 +1187,6 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         return NpcAttackTiming.strength(elapsed, getAttributeValue(Attributes.ATTACK_SPEED))
     }
 
-    private fun prepareEmptyMiningHand(): NpcActionResult? {
-        if (mainHandItem.isEmpty) return null
-        val empty = inventory.indexOfFirst { it.isEmpty }
-        if (empty < 0) return NpcActionResult.rejected("free one inventory slot before empty-hand block work; the held item must be preserved", NpcActionCode.MISSING_RESOURCE)
-        inventory[empty] = inventory[selectedHotbarSlot]
-        inventory[selectedHotbarSlot] = ItemStack.EMPTY
-        refreshMainHandAttributes()
-        return null
-    }
-
     private fun damageMainHandAfterAttack(stack: ItemStack, target: LivingEntity) {
         NpcToolDurability.perform(stack) { damageMainHandNormally(stack, target) }
     }
@@ -1859,7 +1195,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         if (!stack.item.hurtEnemy(stack, target, this)) {
             return
         }
-        stack.hurtAndBreak(1, this) { attacker -> attacker.broadcastBreakEvent(EquipmentSlot.MAINHAND) }
+        // The Item.hurtEnemy hook already pays vanilla sword/axe durability.
         refreshMainHandAttributes()
     }
 
@@ -1868,167 +1204,13 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * explicit ammunition reserve supplies that one missing resource while preserving arrow-item
      * projectile construction, charge, enchantments, durability and normal entity physics.
      */
-    private fun releaseBow(bow: ItemStack, useTicks: Int, hand: InteractionHand): NpcActionResult {
-        val ammo = findArrowAmmunition()
-            ?: return NpcActionResult.rejected("bow requires an arrow in the ammunition reserve or NPC inventory", NpcActionCode.MISSING_RESOURCE, NpcActionChannel.COMBAT)
-        val charge = BowItem.getPowerForTime(useTicks)
-        if (charge < MIN_BOW_DRAW_POWER) {
-            return NpcActionResult.rejected("bow draw is too short", NpcActionCode.NOT_READY, NpcActionChannel.COMBAT)
-        }
-        val arrowStack = ammo.stack
-        val arrowItem = arrowStack.item as ArrowItem
-        val projectile = arrowItem.createArrow(level(), arrowStack, this)
-        projectile.shootFromRotation(this, xRot, yRot, 0.0F, charge * BOW_PROJECTILE_SPEED, BOW_INACCURACY)
-        if (charge == 1.0F) {
-            projectile.isCritArrow = true
-        }
-        val power = EnchantmentHelper.getItemEnchantmentLevel(Enchantments.POWER_ARROWS, bow)
-        if (power > 0) {
-            projectile.baseDamage = projectile.baseDamage + power * POWER_DAMAGE_INCREMENT + POWER_DAMAGE_BASE_BONUS
-        }
-        val punch = EnchantmentHelper.getItemEnchantmentLevel(Enchantments.PUNCH_ARROWS, bow)
-        if (punch > 0) {
-            projectile.knockback = punch
-        }
-        if (EnchantmentHelper.getItemEnchantmentLevel(Enchantments.FLAMING_ARROWS, bow) > 0) {
-            projectile.setSecondsOnFire(ARROW_FIRE_SECONDS)
-        }
-        val infiniteArrow = EnchantmentHelper.getItemEnchantmentLevel(Enchantments.INFINITY_ARROWS, bow) > 0 && arrowStack.`is`(Items.ARROW)
-        if (infiniteArrow) {
-            projectile.pickup = AbstractArrow.Pickup.CREATIVE_ONLY
-        }
-        if (!level().addFreshEntity(projectile)) {
-            return NpcActionResult.failed("could not spawn bow projectile", NpcActionCode.WORLD_REJECTED, channel = NpcActionChannel.COMBAT)
-        }
-        if (!infiniteArrow) {
-            consumeArrowAmmunition(ammo)
-        }
-        val equipmentSlot = if (hand == InteractionHand.MAIN_HAND) EquipmentSlot.MAINHAND else EquipmentSlot.OFFHAND
-        NpcToolDurability.perform(bow) { bow.hurtAndBreak(1, this) { attacker -> attacker.broadcastBreakEvent(equipmentSlot) } }
-        if (hand == InteractionHand.MAIN_HAND) {
-            refreshMainHandAttributes()
-        }
-        level().playSound(null, x, y, z, SoundEvents.ARROW_SHOOT, SoundSource.NEUTRAL, BOW_SOUND_VOLUME, BOW_SOUND_PITCH_BASE / (random.nextFloat() * BOW_SOUND_PITCH_RANDOMNESS + BOW_SOUND_PITCH_OFFSET))
-        return NpcActionResult.succeeded("fired bow using NPC-carried ammunition", channel = NpcActionChannel.COMBAT)
-    }
-
-    /** A release loads one reserve arrow; the next release fires CrossbowItem's charged NBT. */
-    private fun releaseCrossbow(crossbow: ItemStack, useTicks: Int, hand: InteractionHand): NpcActionResult {
-        if (CrossbowItem.isCharged(crossbow)) {
-            NpcToolDurability.perform(crossbow) {
-                CrossbowItem.performShooting(level(), this, hand, crossbow, CROSSBOW_PROJECTILE_SPEED, CROSSBOW_INACCURACY)
-                crossbow.hurtAndBreak(1, this) { attacker -> attacker.broadcastBreakEvent(hand.equipmentSlot()) }
-            }
-            if (hand == InteractionHand.MAIN_HAND) {
-                refreshMainHandAttributes()
-            }
-            return NpcActionResult.succeeded("fired charged crossbow")
-        }
-        val requiredCharge = crossbowChargeTicks(crossbow)
-        if (useTicks < requiredCharge) {
-            return NpcActionResult.rejected("crossbow charge is too short; needs $requiredCharge ticks")
-        }
-        val ammo = findArrowAmmunition()
-            ?: return NpcActionResult.rejected("crossbow requires an arrow in the ammunition reserve or NPC inventory", NpcActionCode.MISSING_RESOURCE, NpcActionChannel.COMBAT)
-        CrossbowItem.setCharged(crossbow, true)
-        val projectiles = ListTag()
-        projectiles.add(ammo.stack.copyWithCount(1).save(CompoundTag()))
-        crossbow.orCreateTag.put(CROSSBOW_CHARGED_PROJECTILES_KEY, projectiles)
-        consumeArrowAmmunition(ammo)
-        level().playSound(null, x, y, z, SoundEvents.CROSSBOW_LOADING_END, SoundSource.NEUTRAL, CROSSBOW_SOUND_VOLUME, CROSSBOW_SOUND_PITCH)
-        return NpcActionResult.succeeded("loaded crossbow from NPC-carried ammunition", channel = NpcActionChannel.COMBAT)
-    }
-
-    /** A normal trident is an ordinary projectile. Riptide stays explicit rather than faking Player travel. */
-    private fun releaseTrident(trident: ItemStack, useTicks: Int, hand: InteractionHand): NpcActionResult {
-        if (useTicks < MIN_TRIDENT_CHARGE_TICKS) {
-            return NpcActionResult.rejected("trident charge is too short")
-        }
-        if (EnchantmentHelper.getItemEnchantmentLevel(Enchantments.RIPTIDE, trident) > 0) {
-            return NpcActionResult.unsupported("Riptide requires Player travel semantics and cannot be applied to a dedicated NPC")
-        }
-        val projectile = ThrownTrident(level(), this, trident.copy())
-        projectile.shootFromRotation(this, xRot, yRot, 0.0F, TRIDENT_PROJECTILE_SPEED, TRIDENT_INACCURACY)
-        if (!level().addFreshEntity(projectile)) {
-            return NpcActionResult.failed("could not spawn trident projectile")
-        }
-        trident.shrink(1)
-        if (hand == InteractionHand.MAIN_HAND) {
-            refreshMainHandAttributes()
-        }
-        level().playSound(null, x, y, z, SoundEvents.TRIDENT_THROW, SoundSource.NEUTRAL, TRIDENT_SOUND_VOLUME, TRIDENT_SOUND_PITCH)
-        return NpcActionResult.succeeded("threw trident")
-    }
-
-    private fun crossbowChargeTicks(crossbow: ItemStack): Int =
-        (CROSSBOW_BASE_CHARGE_TICKS - EnchantmentHelper.getItemEnchantmentLevel(Enchantments.QUICK_CHARGE, crossbow) * CROSSBOW_QUICK_CHARGE_REDUCTION)
-            .coerceAtLeast(CROSSBOW_MIN_CHARGE_TICKS)
-
-    private fun findArrowAmmunition(): ArrowAmmunitionSource? {
-        if (!ammunition.isEmpty && ammunition.item is ArrowItem) {
-            return ArrowAmmunitionSource(ammunition, null)
-        }
-        for (slot in inventory.indices) {
-            val stack = inventory[slot]
-            if (!stack.isEmpty && stack.item is ArrowItem) {
-                return ArrowAmmunitionSource(stack, slot)
-            }
-        }
-        return null
-    }
-
-    private fun consumeArrowAmmunition(source: ArrowAmmunitionSource) {
-        source.stack.shrink(1)
-        val inventorySlot = source.inventorySlot
-        if (inventorySlot == null) {
-            if (source.stack.isEmpty) {
-                ammunition = ItemStack.EMPTY
-            }
-            return
-        }
-        if (source.stack.isEmpty) {
-            replaceInventoryStack(inventorySlot, ItemStack.EMPTY)
-        } else if (inventorySlot == selectedHotbarSlot) {
-            refreshMainHandAttributes()
-        }
-    }
-
-    private fun insertIntoInventory(remaining: ItemStack): Int {
-        val initialCount = remaining.count
-        var selectedSlotTouched = false
-        for (slot in inventory.indices) {
-            val current = inventory[slot]
-            if (!ItemStack.isSameItemSameTags(current, remaining) || current.count >= current.maxStackSize) {
-                continue
-            }
-            val transfer = minOf(current.maxStackSize - current.count, remaining.count)
-            current.grow(transfer)
-            remaining.shrink(transfer)
-            selectedSlotTouched = selectedSlotTouched || slot == selectedHotbarSlot
-            if (remaining.isEmpty) {
-                break
-            }
-        }
-        if (!remaining.isEmpty) {
-            for (slot in inventory.indices) {
-                if (!inventory[slot].isEmpty) {
-                    continue
-                }
-                val transfer = minOf(remaining.maxStackSize, remaining.count)
-                val inserted = remaining.copy()
-                inserted.count = transfer
-                inventory[slot] = inserted
-                remaining.shrink(transfer)
-                selectedSlotTouched = selectedSlotTouched || slot == selectedHotbarSlot
-                if (remaining.isEmpty) {
-                    break
-                }
-            }
-        }
-        if (selectedSlotTouched) {
-            refreshMainHandAttributes()
-        }
-        return initialCount - remaining.count
+    internal fun acceptReturningTrident(projectile: NpcThrownTridentEntity, stack: ItemStack): Boolean {
+        if (!isAlive || isRemoved || projectile.level() != level() || projectile.owner !== this) return false
+        if (!boundingBox.inflate(0.75).intersects(projectile.boundingBox)) return false
+        if (stack.item !is TridentItem || stack.count != 1 || inventoryActions.insert(stack) != 1) return false
+        take(projectile, 1)
+        level().playSound(null, x, y, z, SoundEvents.ITEM_PICKUP, SoundSource.NEUTRAL, 0.2F, 1.0F)
+        return true
     }
 
     private fun dropAndClearInventorySlot(slot: Int) {
@@ -2070,7 +1252,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         }
     }
 
-    private fun refreshMainHandAttributes() {
+    internal fun refreshMainHandAttributes() {
         val attributes = attributes
         attributes.removeAttributeModifiers(appliedMainHandStack.getAttributeModifiers(EquipmentSlot.MAINHAND))
         val current = mainHandItem
@@ -2078,13 +1260,17 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         appliedMainHandStack = current.copy()
     }
 
-    private fun resolveEntity(id: UUID): Entity? {
+    internal fun resolveEntity(id: UUID): Entity? {
         val serverLevel = level() as? ServerLevel ?: return null
         return serverLevel.getEntity(id)
     }
 
     private fun completeAction(result: NpcActionResult) {
         val actionId = result.actionId ?: return
+        val history = ArrayList<NpcActionCompletion>(16)
+        history.addAll(recentActionCompletions.takeLast(15))
+        history.add(NpcActionCompletion(result, level().gameTime))
+        recentActionCompletions = java.util.List.copyOf(history)
         if (result.status == io.samcnpc.core.api.NpcActionStatus.FAILED) {
             SamcnpcCore.LOGGER.warn(
                 "NPC action failed npc={} action={} channel={} code={} detail={}",
@@ -2142,7 +1328,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         NpcHand.OFF -> NpcActionChannel.OFF_HAND
     }
 
-    private fun itemId(stack: ItemStack): String =
+    internal fun itemId(stack: ItemStack): String =
         ForgeRegistries.ITEMS.getKey(stack.item)?.toString() ?: "minecraft:air"
 
     private fun NpcHand.toInteractionHand(): InteractionHand = when (this) {
@@ -2201,6 +1387,9 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     override fun addAdditionalSaveData(tag: CompoundTag) {
         super.addAdditionalSaveData(tag)
         tag.putInt(KEY_DATA_VERSION, DATA_VERSION)
+        tag.putUUID("samcnpcLife", lifeId)
+        tag.putBoolean("samcnpcDeathHandled", deathEquipmentDropped)
+        summonPoint?.let { tag.put("samcnpcSummonPoint", it.save()) }
         val binding = summonerBinding
         if (binding != null) {
             val bindingTag = CompoundTag()
@@ -2217,6 +1406,10 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun readAdditionalSaveData(tag: CompoundTag) {
+        loadedInventory = null
+        recentDamageEventId = null
+        recentAttackerUuid = null
+        recentHurtGameTime = Long.MIN_VALUE
         super.readAdditionalSaveData(tag)
         // Preserve the summoned-player invariant even for entities saved by an older release.
         setPersistenceRequired()
@@ -2229,6 +1422,14 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             SummonerBinding.load(tag.getCompound(KEY_SUMMONER))
         } else {
             null
+        }
+        lifeId = if (dataVersion >= 4 && tag.hasUUID("samcnpcLife")) tag.getUUID("samcnpcLife") else UUID.randomUUID()
+        deathEquipmentDropped = dataVersion >= 4 && tag.getBoolean("samcnpcDeathHandled")
+        summonPoint = io.samcnpc.core.health.NpcSummonPoint.load(tag.getCompound("samcnpcSummonPoint"))
+        if (summonPoint == null && summonerBinding != null) {
+            // Older saves never recorded the summon position. First loaded position is their migration anchor.
+            summonPoint = io.samcnpc.core.health.NpcSummonPoint.capture(this)
+            if (dataVersion >= 4) SamcnpcCore.LOGGER.warn("NPC {} had an invalid summon point; using its loaded position", uuid)
         }
         val binding = summonerBinding
         skinBinding = if (binding != null && tag.contains(KEY_SKIN, CompoundTag.TAG_COMPOUND.toInt())) {
@@ -2247,10 +1448,15 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         syncBinding()
         syncSkin()
         entityData.set(DATA_SELECTED_SLOT, selectedHotbarSlot.toByte())
+        if (!level().isClientSide) {
+            // Passive pickup runs before NpcServerTickEvent. Preserve loaded facts separately
+            // so callers do not mistake a new pickup for an inconsistent entity save.
+            loadedInventory = NpcInventoryLoadSnapshot(UUID.randomUUID(), inventory.map(::itemSnapshot), equipmentContents())
+        }
     }
 
     companion object {
-        private const val DATA_VERSION = 3
+        private const val DATA_VERSION = 4
         private const val KEY_DATA_VERSION = "samcnpcDataVersion"
         private const val KEY_SUMMONER = "summoner"
         private const val KEY_SKIN = "skin"
@@ -2275,55 +1481,14 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         private const val CRITICAL_DAMAGE_MULTIPLIER = 1.5F
         private const val KNOCKBACK_STRENGTH = 0.5F
         private const val POST_HIT_HORIZONTAL_MOMENTUM = 0.6
-        private const val PICKUP_REACH_SQR = 2.0 * 2.0
-        private const val PASSIVE_PICKUP_RADIUS = 1.0
-        private const val MAX_PASSIVE_PICKUPS_PER_TICK = 8
-        private const val PICKUP_SOUND_VOLUME = 0.2F
-        private const val PICKUP_SOUND_VARIATION = 0.7F
-        private const val PICKUP_SOUND_BASE_PITCH = 1.0F
-        private const val PICKUP_SOUND_PITCH_MULTIPLIER = 2.0F
-        private const val DROP_HEIGHT_OFFSET = 0.2
-        private const val RANGED_REACH_SQR = 64.0 * 64.0
-        private const val BOW_FULL_CHARGE_TICKS = 20
-        private const val MIN_BOW_DRAW_POWER = 0.1F
-        private const val BOW_PROJECTILE_SPEED = 3.0F
-        private const val BOW_INACCURACY = 1.0F
-        private const val POWER_DAMAGE_INCREMENT = 0.5
-        private const val POWER_DAMAGE_BASE_BONUS = 0.5
-        private const val ARROW_FIRE_SECONDS = 5
-        private const val BOW_SOUND_VOLUME = 1.0F
-        private const val BOW_SOUND_PITCH_BASE = 1.0F
-        private const val BOW_SOUND_PITCH_RANDOMNESS = 0.4F
-        private const val BOW_SOUND_PITCH_OFFSET = 1.2F
-        private const val CROSSBOW_BASE_CHARGE_TICKS = 25
-        private const val CROSSBOW_QUICK_CHARGE_REDUCTION = 5
-        private const val CROSSBOW_MIN_CHARGE_TICKS = 5
-        private const val CROSSBOW_PROJECTILE_SPEED = 3.15F
-        private const val CROSSBOW_INACCURACY = 1.0F
-        private const val CROSSBOW_SOUND_VOLUME = 1.0F
-        private const val CROSSBOW_SOUND_PITCH = 1.0F
-        private const val CROSSBOW_CHARGED_PROJECTILES_KEY = "ChargedProjectiles"
-        private const val MIN_TRIDENT_CHARGE_TICKS = 10
-        private const val TRIDENT_PROJECTILE_SPEED = 2.5F
-        private const val TRIDENT_INACCURACY = 1.0F
-        private const val TRIDENT_SOUND_VOLUME = 1.0F
-        private const val TRIDENT_SOUND_PITCH = 1.0F
         private const val THROWN_POTION_SPEED = 0.5F
         private const val THROWN_POTION_INACCURACY = 1.0F
-        private const val BLOCK_BREAK_REACH_SQR = 4.5 * 4.5
-        // Only an already accepted break may tolerate this half-block post-physics settle.
-        private const val BLOCK_BREAK_ACTIVE_REACH_SQR = 5.0 * 5.0
-        private const val MAX_NAVIGATION_TARGET_DISTANCE_SQR = 64.0 * 64.0
-        private const val MIN_NAVIGATION_SPEED_MULTIPLIER = 0.1F
-        private const val MAX_NAVIGATION_SPEED_MULTIPLIER = 1.5F
-        private const val NAVIGATION_REQUEST_TTL_TICKS = 200L
         private const val BLOCK_PLACE_REACH_SQR = 4.5 * 4.5
         private const val BLOCK_INTERACTION_REACH_SQR = 4.5 * 4.5
         private const val PLACEMENT_FACE_INSET = 0.001
         private const val ENTITY_INTERACTION_REACH_SQR = 4.5 * 4.5
         private const val ENTITY_HIT_TOLERANCE = 0.25
         private const val MAX_HIT_OFFSET_SQR = 1.5 * 1.5
-        private const val BREAK_SWING_INTERVAL = 4L
         private const val BLOCK_UPDATE_FLAGS = 3
         private const val TOTEM_RESERVE_CAPACITY = 1
 
@@ -2337,31 +1502,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         const val EQUIPMENT_TOTEM = 7
         const val EQUIPMENT_SLOT_COUNT = 8
 
-    private data class ActiveBlockBreak(
-            val actionId: UUID,
-            val position: BlockPos,
-            var progress: Float,
-        )
 
-        private data class PendingNavigation(
-            val position: NpcPosition,
-            val speedMultiplier: Float,
-        )
-
-        private data class ActiveRangedAttack(
-            val actionId: UUID,
-            val targetUuid: UUID,
-            val hand: NpcHand,
-            val weapon: NpcRangedWeaponKind,
-            var phase: NpcRangedAttackPhase,
-            var phaseStartedGameTime: Long,
-            var requiredChargeTicks: Int,
-        )
-
-        private data class ArrowAmmunitionSource(
-            val stack: ItemStack,
-            val inventorySlot: Int?,
-        )
 
         private fun loadOptionalStack(tag: CompoundTag, key: String): ItemStack =
             if (tag.contains(key, CompoundTag.TAG_COMPOUND.toInt())) ItemStack.of(tag.getCompound(key)) else ItemStack.EMPTY

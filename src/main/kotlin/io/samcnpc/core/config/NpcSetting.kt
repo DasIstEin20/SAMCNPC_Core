@@ -22,6 +22,9 @@ internal enum class NpcSetting(val key: String, val factoryDefault: Boolean) {
     TOOL_DURABILITY("toolDurability", true),
     IGNORE_MISSING_TOOL("ignoreMissingTool", false),
     BARE_HANDS_ONLY("bareHandsOnly", false),
+    RESPAWN("respawn", false),
+    KEEP_INVENTORY("keepInventory", false),
+    DROP_ITEMS_ON_DEATH("dropItemsAfterDeath", true),
 }
 
 internal data class NpcSettingsSnapshot(

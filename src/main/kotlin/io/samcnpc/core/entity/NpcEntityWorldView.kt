@@ -14,15 +14,16 @@ import io.samcnpc.core.api.NpcItemStackSnapshot
 import io.samcnpc.core.api.NpcItemClassifier
 import io.samcnpc.core.api.NpcVector
 import io.samcnpc.core.api.NpcWorldView
+import io.samcnpc.core.api.NpcStandingSpaceObservation
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
 import net.minecraft.server.level.ServerLevel
+import net.minecraft.world.entity.Pose
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.entity.item.ItemEntity
 import net.minecraft.world.Container
 import net.minecraft.world.level.ClipContext
-import net.minecraft.world.level.block.entity.BlockEntity
 import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.HitResult
 import net.minecraft.world.phys.Vec3
@@ -37,17 +38,33 @@ import kotlin.math.sqrt
 internal class NpcEntityWorldView(
     private val npc: SamcnpcEntity,
 ) : NpcWorldView {
-    override val dimensionId: String
-        get() = npc.level().dimension().location().toString()
+    private fun requireAvailable() {
+        val server = npc.level().server
+        check(server != null && server.isSameThread) { "NPC world observations require the authoritative server thread" }
+        check(npc.isAlive && !npc.isRemoved) { "NPC world observation refers to an unloaded or removed body" }
+    }
 
-    override fun observeEntity(uuid: UUID): NpcEntityObservation? =
-        (npc.level() as? ServerLevel)?.getEntity(uuid)?.takeIf(::isWithinObservationRange)?.let(::observe)
+    override val dimensionId: String
+        get() {
+            requireAvailable()
+            return npc.level().dimension().location().toString()
+        }
+
+    override fun observeEntity(uuid: UUID): NpcEntityObservation? {
+        requireAvailable()
+        return (npc.level() as? ServerLevel)?.getEntity(uuid)?.takeIf(::isWithinObservationRange)?.let(::observe)
+    }
 
     override fun queryEntities(query: NpcEntityQuery): List<NpcEntityObservation> {
+        requireAvailable()
         if (!query.radius.isFinite() || query.radius !in 0.0..NpcEntityQuery.MAX_RADIUS) {
             return emptyList()
         }
-        val limit = query.limit.coerceIn(1, NpcEntityQuery.MAX_LIMIT)
+        if (query.limit !in 1..NpcEntityQuery.MAX_LIMIT || !query.center.isFinite() ||
+            query.typeIds.size > NpcEntityQuery.MAX_LIMIT || query.typeIds.any { it.length > 256 }) {
+            return emptyList()
+        }
+        val limit = query.limit
         val center = Vec3(query.center.x, query.center.y, query.center.z)
         if (npc.position().distanceToSqr(center) > MAX_QUERY_CENTER_DISTANCE_SQR) {
             return emptyList()
@@ -55,6 +72,7 @@ internal class NpcEntityWorldView(
         val area = AABB.ofSize(center, query.radius * 2.0, query.radius * 2.0, query.radius * 2.0)
         val entities = npc.level().getEntitiesOfClass(Entity::class.java, area) { candidate ->
             (query.includeNpc || candidate.uuid != npc.uuid) &&
+                isWithinObservationRange(candidate) &&
                 isWithinRadius(candidate, center, query.radius) &&
                 (query.typeIds.isEmpty() || entityTypeId(candidate) in query.typeIds)
         }
@@ -66,21 +84,28 @@ internal class NpcEntityWorldView(
     }
 
     override fun observeBlock(position: NpcBlockPosition): NpcBlockObservation? {
+        requireAvailable()
         val blockPos = BlockPos(position.x, position.y, position.z)
         if (npc.distanceToSqr(blockPos.center) > MAX_BLOCK_OBSERVE_DISTANCE_SQR) {
             return null
         }
-        val state = npc.level().getBlockState(blockPos)
+        val level = npc.level() as ServerLevel
+        if (!level.hasChunkAt(blockPos)) return null
+        val blocks = LoadedNpcBlocks(level)
+        val state = blocks.getBlockState(blockPos)
+        val solid = state.isSolidRender(blocks, blockPos)
+        if (blocks.unavailable) return null
         return NpcBlockObservation(
             position = position,
             blockId = ForgeRegistries.BLOCKS.getKey(state.block)?.toString() ?: "minecraft:air",
             isAir = state.isAir,
-            isSolid = state.isSolidRender(npc.level(), blockPos),
-            hasContainer = npc.level().getBlockEntity(blockPos) is BlockEntity && npc.level().getBlockEntity(blockPos) is net.minecraft.world.Container,
+            isSolid = solid,
+            hasContainer = blocks.getBlockEntity(blockPos) is Container,
         )
     }
 
     override fun observeBlockContainer(position: NpcBlockPosition): NpcBlockContainerObservation? {
+        requireAvailable()
         val blockPos = BlockPos(position.x, position.y, position.z)
         if (npc.distanceToSqr(blockPos.center) > MAX_BLOCK_OBSERVE_DISTANCE_SQR) {
             return null
@@ -104,9 +129,32 @@ internal class NpcEntityWorldView(
         return NpcBlockContainerObservation(position, container.containerSize, observedSlots)
     }
 
+    override fun observeStandingSpace(feet: NpcPosition): NpcStandingSpaceObservation? {
+        requireAvailable()
+        if (!feet.isFinite()) return null
+        val origin = Vec3(feet.x, feet.y, feet.z)
+        if (npc.position().distanceToSqr(origin) > MAX_BLOCK_OBSERVE_DISTANCE_SQR) return null
+        val level = npc.level() as ServerLevel
+        val area = npc.getDimensions(Pose.STANDING).makeBoundingBox(origin)
+        // Vanilla collisions may inspect blocks immediately outside the body hull.
+        val neighborhood = area.inflate(1.0)
+        if (!level.hasChunksAt(BlockPos.containing(neighborhood.minX, neighborhood.minY, neighborhood.minZ),
+                BlockPos.containing(neighborhood.maxX, neighborhood.maxY, neighborhood.maxZ))) return null
+        val support = AABB(area.minX + 0.0001, feet.y - 0.0625, area.minZ + 0.0001,
+            area.maxX - 0.0001, feet.y, area.maxZ - 0.0001)
+        return NpcStandingSpaceObservation(feet,
+            clear = level.noCollision(npc, area),
+            supported = level.getBlockCollisions(npc, support).iterator().hasNext(),
+            inFluid = level.containsAnyLiquid(area))
+    }
+
     override fun raycast(request: NpcRaycastRequest): NpcRaycastResult {
+        requireAvailable()
         if (!request.maxDistance.isFinite() || request.maxDistance !in 0.0..NpcRaycastRequest.MAX_DISTANCE) {
             return NpcRaycastResult.Rejected("raycast distance is out of bounds")
+        }
+        if (!request.origin.isFinite()) {
+            return NpcRaycastResult.Rejected("raycast origin must be finite")
         }
         val origin = Vec3(request.origin.x, request.origin.y, request.origin.z)
         if (npc.getEyePosition().distanceToSqr(origin) > MAX_RAYCAST_ORIGIN_DISTANCE_SQR) {
@@ -126,7 +174,8 @@ internal class NpcEntityWorldView(
             request.direction.z / directionLength,
         )
         val end = origin.add(normalized.scale(request.maxDistance))
-        val hit = npc.level().clip(
+        val blocks = LoadedNpcBlocks(npc.level() as ServerLevel)
+        val hit = blocks.clip(
             ClipContext(
                 origin,
                 end,
@@ -135,6 +184,7 @@ internal class NpcEntityWorldView(
                 npc,
             ),
         )
+        if (blocks.unavailable) return NpcRaycastResult.Rejected("raycast reached an unavailable chunk")
         if (hit.type != HitResult.Type.BLOCK) {
             return NpcRaycastResult.Miss
         }
@@ -144,6 +194,8 @@ internal class NpcEntityWorldView(
             location = NpcPosition(hit.location.x, hit.location.y, hit.location.z),
         )
     }
+
+    private fun NpcPosition.isFinite(): Boolean = x.isFinite() && y.isFinite() && z.isFinite()
 
     private fun isWithinObservationRange(entity: Entity): Boolean =
         npc.distanceToSqr(entity) <= MAX_ENTITY_OBSERVE_DISTANCE_SQR
@@ -179,6 +231,7 @@ internal class NpcEntityWorldView(
             isPlayer = entity is net.minecraft.world.entity.player.Player,
             healthFraction = healthFraction,
             itemStack = itemStack,
+            combat = living?.let { NpcCombatRules.facts(npc, it) },
         )
     }
 

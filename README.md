@@ -160,6 +160,9 @@ Press **Apply** before switching tabs or closing; uncommitted edits are discarde
 | Tool durability | Yes |
 | Ignore missing tool | No |
 | Bare hands only | No |
+| Respawn | No |
+| Keep inventory (requires Respawn) | No |
+| Drop items after being killed | Yes |
 
 Both Default preserve existing per-NPC animation/chunk-loading commands and the world's
 hearts setting. Forced GUI settings lock those equivalent commands; return both scopes to
@@ -177,6 +180,30 @@ Global settings live in `config/samcnpc-core-global.toml`; world settings live i
 `<save>/serverconfig/samcnpc-core-world.toml`. In-world edits are acknowledged by the server
 and require the integrated host or an operator. A multiplayer client's local global config
 does not override the server. Changes affect loaded NPCs without restarting the world.
+
+## Respawn, inventory and spawn points
+
+The Forge config screen exposes **Respawn**, **Keep inventory**, and **Drop items after being killed**
+in both Global and In world scopes. Keep inventory becomes available when effective Respawn is enabled.
+Retained items are not also dropped. With retention off, Drop items chooses between real drops and
+clearing items. All inventory, armor, offhand and reserve slots follow the same policy.
+
+Respawn normally returns the NPC to its original summon position after 100 game ticks, subject to
+chunk readiness and safe standing space. Change the recorded point with:
+
+```text
+/samcnpc setspawnpoint Sam
+/samcnpc setspawnpoint Sam 100 64 200
+/samcnpc setspawnpoint all
+```
+
+Without coordinates, the point is the command source's position in its current dimension.
+Names/UUIDs address individual NPCs; `all` requires operator level 2. Eligible loaded, indexed unloaded
+and pending NPCs are covered. Future summons keep their own original point. Single-NPC changes
+require the summoner or an operator. The point and pending respawn survive saves/restarts.
+
+A totem in the reserve slot now protects automatically with both hands occupied. Held totems keep
+priority. This is a mechanical Core feature and needs no Behavior pack.
 
 ## Vanilla effects
 
@@ -220,7 +247,8 @@ the mechanics on the server thread.
 .\gradlew.bat runGameTestServer
 .\gradlew.bat runClientAnimationSmoke
 .\gradlew.bat runClientConfigSmoke
-.\gradlew.bat runChunkSmokeSave runChunkSmokeLoad
+.\gradlew.bat runChunkSmokeSave runChunkSmokeLoad -PchunkSmokeId=example1
+.\gradlew.bat runRespawnSmokeSave runRespawnSmokeLoad -PrespawnSmokeId=example1
 python tools/check_core_boundary.py
 ```
 
@@ -231,11 +259,13 @@ when finished, and a missing or unsuccessful result fails the Gradle task. The t
 included in the shipped JAR.
 `runClientConfigSmoke` exercises the real Forge config screen, server acknowledgements,
 client entity synchronization, two independent saves and reload. It uses `run-config-smoke/`
-and fails if its result is missing. Core's 25 dedicated GameTests include double chests,
+and fails if its result is missing. Core's 93 dedicated GameTests include double chests,
 all 33 vanilla effects, tool modes, durability, hostile targeting and real chunk tickets.
 The chunk smoke uses two separate server JVMs and an isolated `run-chunk-smoke` save to verify
 terrain generation, NPC/inventory persistence and automatic ticking after restart, with zero players.
-Run save then load; archive the previous `run-chunk-smoke` directory before repeating the pair.
+Run save then load with the same ID; use a new ID for each new pair. GameTests have a fresh flat
+world in a fresh `run-gametest-<id>/` directory; ordinary dev saves are separate. The respawn pair starts two ordinary
+dedicated server JVMs and verifies pending bodies, retained inventory and changed spawn points.
 A normal server launched with `runServer` requires the user to accept Minecraft's EULA.
 
 ## Project status
@@ -245,7 +275,8 @@ that directly require a `Player` object remain unsupported. These include some c
 hooks and certain items from other mods. Unsupported paths return an explicit `UNSUPPORTED` result.
 Full player parity and compatibility with arbitrary modpacks are not guaranteed.
 
-The totem reserve is storage; a totem must be held in a hand to work through normal game mechanics.
+The reserve totem protects automatically, after held totems. It consumes one totem without
+exchanging either hand, honors Forge cancellation and bypass damage, and prevents death/respawn.
 Online-account skins, compatibility with land-protection mods, and advanced weapon/enchantment
 cases require separate integration tests.
 

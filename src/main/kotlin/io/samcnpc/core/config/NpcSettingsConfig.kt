@@ -60,6 +60,19 @@ internal object NpcSettingsConfig {
     fun enabled(setting: NpcSetting, fallback: Boolean = setting.factoryDefault): Boolean =
         SettingChoice.resolve(global.choice(setting), world.choice(setting), fallback)
 
+    /** Stored keep preference can remain dormant; it cannot retain items without respawn. */
+    fun deathPolicy(): io.samcnpc.core.health.NpcDeathPolicy = io.samcnpc.core.health.NpcDeathPolicy.resolve(
+        enabled(NpcSetting.RESPAWN), enabled(NpcSetting.KEEP_INVENTORY), enabled(NpcSetting.DROP_ITEMS_ON_DEATH),
+    )
+
+    fun keepInventoryAvailable(globalScope: Boolean, choices: List<SettingChoice>): Boolean {
+        val index = NpcSetting.RESPAWN.ordinal
+        return SettingChoice.resolve(
+            if (globalScope) choices[index] else global.choice(NpcSetting.RESPAWN),
+            if (globalScope) world.choice(NpcSetting.RESPAWN) else choices[index], false,
+        )
+    }
+
     @Synchronized
     fun update(globalScope: Boolean, choices: List<SettingChoice>) {
         (if (globalScope) global else world).replace(choices)

@@ -47,8 +47,13 @@ object NpcConfigClientSmoke {
     private val worldA = "config-smoke-${System.currentTimeMillis()}-a"
     private val worldB = worldA.removeSuffix("a") + "b"
     private val companionReport = System.getProperty("samcnpc.configSmokeCompanionReport", "")
+    private val toolVariant = System.getProperty("samcnpc.toolSettingsVariant", "missing")
+    private val missingToolChoice = if (toolVariant == "bare_hands") SettingChoice.NO else SettingChoice.YES
+    private val bareHandsChoice = if (toolVariant == "bare_hands") SettingChoice.YES else SettingChoice.DEFAULT
+    private val durabilityChoice = if (toolVariant == "durable") SettingChoice.NO else SettingChoice.DEFAULT
+    init { require(toolVariant in setOf("missing", "bare_hands", "durable")) }
     private enum class Phase { TITLE, LOGOS, LOCAL, CREATE_A, A_JOIN, LOCKED, UNLOCK, GLOBAL_SAVE, WORLD_SAVE, WORK,
-        CREATE_B, B_JOIN, B_VIEW, LOAD_A, REJOIN_A, RESTORED, FINISH }
+        CREATE_B, B_JOIN, B_VIEW, LOAD_A, REJOIN_A, RESTORED, FINISH, START_RESPAWN, PROTECTION, RESPAWN }
 
     private data class Sample(val world: String, val entityId: Int, val animated: Boolean, val global: List<SettingChoice>, val local: List<SettingChoice>)
     // Only immutable observations cross the client/server boundary.
@@ -61,6 +66,12 @@ object NpcConfigClientSmoke {
     private var logoIndex = 0
     private var pendingScreenshot: String? = null
     private var done = false
+    @Volatile private var requestDeath = false
+    @Volatile private var respawnPassed = false
+    @Volatile private var totemPassed = false
+    private var lethalAt = Long.MAX_VALUE
+    private var respawnUuid: java.util.UUID? = null
+    private var deadEntityId = -1
 
     @SubscribeEvent
     fun clientTick(event: TickEvent.ClientTickEvent) {
@@ -108,8 +119,14 @@ object NpcConfigClientSmoke {
             Phase.LOCAL -> if (age > 12) {
                 check(!buttons()[1].active) { "World settings were editable without a world" }
                 choose(NpcSetting.ANIMATIONS, SettingChoice.NO)
+                show(NpcSetting.KEEP_INVENTORY)
+                check(!row(NpcSetting.KEEP_INVENTORY).active) { "Keep inventory was available with respawn disabled" }
+                choose(NpcSetting.RESPAWN, SettingChoice.YES)
+                choose(NpcSetting.KEEP_INVENTORY, SettingChoice.YES)
+                choose(NpcSetting.DROP_ITEMS_ON_DEATH, SettingChoice.NO)
                 apply()
                 check(NpcSettingsConfig.global.choice(NpcSetting.ANIMATIONS) == SettingChoice.NO)
+                check(NpcSettingsConfig.deathPolicy().respawn && NpcSettingsConfig.deathPolicy().items == io.samcnpc.core.health.NpcDeathPolicy.Items.KEEP)
                 capture("01-global.png", "Main-menu Apply persisted global animations=NO; world tab unavailable")
                 advance(Phase.CREATE_A)
             }
@@ -125,6 +142,7 @@ object NpcConfigClientSmoke {
             }
             Phase.LOCKED -> if (serverScreenReady() && age > 20) {
                 buttons()[1].onPress()
+                show(NpcSetting.ANIMATIONS)
                 check(!row(NpcSetting.ANIMATIONS).active) { "Global No failed to lock the world's row" }
                 capture("02-world-locked.png", "In-world reply is editable for host; Global No locks world animations")
                 advance(Phase.UNLOCK)
@@ -132,23 +150,41 @@ object NpcConfigClientSmoke {
             Phase.UNLOCK -> if (age > 12) {
                 buttons()[0].onPress()
                 choose(NpcSetting.ANIMATIONS, SettingChoice.DEFAULT)
+                choose(NpcSetting.KEEP_INVENTORY, SettingChoice.DEFAULT)
+                choose(NpcSetting.RESPAWN, SettingChoice.DEFAULT)
+                choose(NpcSetting.DROP_ITEMS_ON_DEATH, SettingChoice.DEFAULT)
                 apply()
                 advance(Phase.GLOBAL_SAVE)
             }
             Phase.GLOBAL_SAVE -> if (saved() && age > 20) {
                 check(checkNotNull(NpcSettingsInbox.snapshot).global[NpcSetting.ANIMATIONS.ordinal] == SettingChoice.DEFAULT)
                 buttons()[1].onPress()
+                show(NpcSetting.ANIMATIONS)
                 check(row(NpcSetting.ANIMATIONS).active)
                 choose(NpcSetting.ANIMATIONS, SettingChoice.NO)
-                choose(NpcSetting.IGNORE_MISSING_TOOL, SettingChoice.YES)
+                choose(NpcSetting.IGNORE_MISSING_TOOL, missingToolChoice)
+                choose(NpcSetting.BARE_HANDS_ONLY, bareHandsChoice)
+                choose(NpcSetting.TOOL_DURABILITY, durabilityChoice)
+                show(NpcSetting.KEEP_INVENTORY)
+                check(!row(NpcSetting.KEEP_INVENTORY).active)
+                choose(NpcSetting.RESPAWN, SettingChoice.YES)
+                choose(NpcSetting.KEEP_INVENTORY, SettingChoice.YES)
+                choose(NpcSetting.DROP_ITEMS_ON_DEATH, SettingChoice.YES)
                 apply()
                 advance(Phase.WORLD_SAVE)
             }
             Phase.WORLD_SAVE -> if (saved() && age > 20 && sample?.animated == false) {
                 check(checkNotNull(sample).local[NpcSetting.ANIMATIONS.ordinal] == SettingChoice.NO)
+                check(checkNotNull(sample).local[NpcSetting.IGNORE_MISSING_TOOL.ordinal] == missingToolChoice)
+                check(checkNotNull(sample).local[NpcSetting.BARE_HANDS_ONLY.ordinal] == bareHandsChoice)
+                check(checkNotNull(sample).local[NpcSetting.TOOL_DURABILITY.ordinal] == durabilityChoice)
+                check(listOf(NpcSetting.RESPAWN, NpcSetting.KEEP_INVENTORY, NpcSetting.DROP_ITEMS_ON_DEATH).all {
+                    checkNotNull(sample).local[it.ordinal] == SettingChoice.YES
+                })
+                results.add("Scrolled real global/world GUI, disabled Keep inventory before Respawn, and saved all three death settings through server acknowledgement")
                 val body = mc.level?.getEntity(checkNotNull(sample).entityId) as? SamcnpcEntity ?: return
                 check(!body.animationsEnabled()) { "World animation setting did not synchronize to the real client entity" }
-                capture("03-world-settings.png", "Server Apply saved world A animation=NO, ignoreMissingTool=YES; client entity synchronized")
+                capture("03-world-settings.png", "Server Apply saved world A animation=NO, ignoreMissingTool=$missingToolChoice, bareHandsOnly=$bareHandsChoice, toolDurability=$durabilityChoice; client entity synchronized")
                 advance(Phase.WORK)
             }
             Phase.WORK -> if (age > 12) {
@@ -188,7 +224,9 @@ object NpcConfigClientSmoke {
                 val current = checkNotNull(sample)
                 check(current.global.all { it == SettingChoice.DEFAULT })
                 check(current.local[NpcSetting.ANIMATIONS.ordinal] == SettingChoice.NO &&
-                    current.local[NpcSetting.IGNORE_MISSING_TOOL.ordinal] == SettingChoice.YES && !current.animated)
+                    current.local[NpcSetting.IGNORE_MISSING_TOOL.ordinal] == missingToolChoice && !current.animated)
+                check(current.local[NpcSetting.BARE_HANDS_ONLY.ordinal] == bareHandsChoice &&
+                    current.local[NpcSetting.TOOL_DURABILITY.ordinal] == durabilityChoice)
                 val body = mc.level?.getEntity(current.entityId) as? SamcnpcEntity ?: return
                 if (body.animationsEnabled()) return
                 openConfig()
@@ -196,7 +234,29 @@ object NpcConfigClientSmoke {
             }
             Phase.FINISH -> if (serverScreenReady() && age > 20) {
                 buttons()[1].onPress()
-                capture("05-reloaded-world.png", "World A reload restored its settings and synchronized entity state; global DEFAULT persists")
+                show(NpcSetting.KEEP_INVENTORY)
+                check(row(NpcSetting.KEEP_INVENTORY).active)
+                check(listOf(NpcSetting.RESPAWN, NpcSetting.KEEP_INVENTORY, NpcSetting.DROP_ITEMS_ON_DEATH).all {
+                    checkNotNull(NpcSettingsInbox.snapshot).world[it.ordinal] == SettingChoice.YES
+                })
+                show(NpcSetting.DROP_ITEMS_ON_DEATH)
+                capture("05-reloaded-world.png", "World A reload restored all settings, including respawn/keep/drop=YES; global DEFAULT persists")
+                advance(Phase.START_RESPAWN)
+            }
+            Phase.START_RESPAWN -> if (age > 12) {
+                mc.setScreen(null)
+                requestDeath = true
+                advance(Phase.PROTECTION)
+            }
+            Phase.PROTECTION -> if (totemPassed && age > 10) {
+                capture("07-automatic-totem.png", "Automatic reserve totem protected a real NPC with diamond main hand and shield offhand; reserve consumed, both hands intact, no pending respawn")
+                advance(Phase.RESPAWN)
+            }
+            Phase.RESPAWN -> if (respawnPassed && age > 130) {
+                val current = checkNotNull(sample)
+                val body = mc.level?.getEntity(current.entityId) as? SamcnpcEntity ?: return
+                check(body.isAlive && body.mainHandItem.`is`(net.minecraft.world.item.Items.DIAMOND) && body.mainHandItem.count == 7)
+                capture("06-respawn.png", "Actual client tracked replacement UUID after death at commanded spawn point; seven diamonds and offhand shield kept with zero duplicate drops")
                 Files.writeString(Path.of("config-smoke-result.txt"), results.joinToString("\n") + "\nPASS\n")
                 done = true
             }
@@ -222,13 +282,45 @@ object NpcConfigClientSmoke {
             player.teleportTo(level, 0.5, -60.0, -5.5, 0.0F, 0.0F)
         }
         val service = CoreNpcApi.service(server)
-        var handle = service.loadedBySummoner(player.uuid).firstOrNull { it.displayName == "ConfigSmoke" }
+        var handle = if (respawnUuid != null) service.find(checkNotNull(respawnUuid)) else service.loadedBySummoner(player.uuid).firstOrNull { it.displayName == "ConfigSmoke" }
+        if (handle == null && respawnUuid != null) return
         if (handle == null) {
             if (serverAge < 40) return
             handle = checkNotNull(service.summon(NpcSummonRequest(player.uuid, "ConfigSmoke", "minecraft:overworld",
                 NpcPosition(0.5, -60.0, 0.5), 0.0F)).handle)
         }
         val npc = level.getEntity(handle.npcUuid) as? SamcnpcEntity ?: return
+        if (requestDeath && respawnUuid == null) {
+            check(server.commands.performPrefixedCommand(server.createCommandSourceStack(), "samcnpc setspawnpoint ${npc.uuid} 3.5 -60 0.5") == 1)
+            npc.setInventoryStack(0, net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.DIAMOND, 7))
+            npc.selectHotbarSlot(0)
+            npc.setMenuEquipmentStack(SamcnpcEntity.EQUIPMENT_OFF_HAND, net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.SHIELD))
+            npc.setMenuEquipmentStack(SamcnpcEntity.EQUIPMENT_TOTEM, net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.TOTEM_OF_UNDYING))
+            check(npc.hurt(level.damageSources().generic(), 1000.0F) && npc.isAlive && npc.health == 1.0F)
+            check(npc.menuEquipmentStack(SamcnpcEntity.EQUIPMENT_TOTEM).isEmpty && npc.mainHandItem.count == 7 && npc.offhandItem.`is`(net.minecraft.world.item.Items.SHIELD))
+            check(io.samcnpc.core.health.NpcRespawns.data(server).find(npc.uuid) == null)
+            totemPassed = true
+            requestDeath = false
+            lethalAt = level.gameTime + 40L
+            return
+        }
+        if (totemPassed && respawnUuid == null && level.gameTime >= lethalAt) {
+            respawnUuid = npc.uuid
+            deadEntityId = npc.id
+            npc.setPos(8.5, -60.0, 0.5)
+            check(npc.hurt(level.damageSources().genericKill(), 1000.0F))
+            return
+        }
+        if (respawnUuid != null && !respawnPassed) {
+            if (!npc.isAlive || npc.id == deadEntityId) return
+            check(npc.uuid == respawnUuid && npc.mainHandItem.`is`(net.minecraft.world.item.Items.DIAMOND) && npc.mainHandItem.count == 7)
+            check(npc.offhandItem.`is`(net.minecraft.world.item.Items.SHIELD) && kotlin.math.abs(npc.x - 3.5) < 0.01)
+            check(level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity::class.java,
+                net.minecraft.world.phys.AABB(5.0, -62.0, -3.0, 12.0, -57.0, 4.0)).none {
+                    it.item.`is`(net.minecraft.world.item.Items.DIAMOND) || it.item.`is`(net.minecraft.world.item.Items.SHIELD)
+                })
+            respawnPassed = true
+        }
         sample = Sample(world, npc.id, npc.animationsEnabled(), NpcSettingsConfig.global.choices(), NpcSettingsConfig.world.choices())
     }
 
@@ -257,7 +349,18 @@ object NpcConfigClientSmoke {
 
     private fun buttons(): List<Button> = checkNotNull(Minecraft.getInstance().screen).children().filterIsInstance<Button>()
     private fun row(setting: NpcSetting): Button = buttons().filter { it.width == 106 }.sortedBy { it.y }[setting.ordinal]
+    private fun show(setting: NpcSetting) {
+        repeat(NpcSetting.entries.size) {
+            val button = row(setting)
+            if (!button.visible) {
+                val screen = checkNotNull(Minecraft.getInstance().screen)
+                screen.mouseScrolled(screen.width / 2.0, screen.height / 2.0, if (button.y < screen.height / 2) 1.0 else -1.0)
+            }
+        }
+        check(row(setting).visible) { "Cannot scroll to $setting" }
+    }
     private fun choose(setting: NpcSetting, choice: SettingChoice) {
+        show(setting)
         repeat(3) {
             val button = row(setting)
             check(button.active)

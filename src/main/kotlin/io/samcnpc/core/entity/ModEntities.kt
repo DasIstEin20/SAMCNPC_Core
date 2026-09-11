@@ -10,6 +10,14 @@ import net.minecraftforge.registries.RegistryObject
 object ModEntities {
     val REGISTRY: DeferredRegister<EntityType<*>> = DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, SamcnpcCore.MOD_ID)
 
+    val NPC_TRIDENT: RegistryObject<EntityType<NpcThrownTridentEntity>> = REGISTRY.register("npc_trident") {
+        EntityType.Builder.of(::NpcThrownTridentEntity, MobCategory.MISC)
+            .sized(0.5F, 0.5F)
+            .clientTrackingRange(4)
+            .updateInterval(20)
+            .build("${SamcnpcCore.MOD_ID}:npc_trident")
+    }
+
     val NPC: RegistryObject<EntityType<SamcnpcEntity>> = REGISTRY.register("npc") {
         EntityType.Builder.of(::SamcnpcEntity, MobCategory.MISC)
             .sized(0.6F, 1.8F)

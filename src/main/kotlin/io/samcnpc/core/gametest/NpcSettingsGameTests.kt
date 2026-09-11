@@ -65,12 +65,17 @@ object NpcSettingsGameTests {
         val target = NpcBlockPosition(block.x, block.y, block.z)
         val guest = ServerPlayer(level.server, level, GameProfile(UUID.randomUUID(), "settings-guest"))
         val revision = NpcSettingsConfig.revision
-        check(NpcSettingsNetwork.apply(guest, true, List(7) { SettingChoice.YES }, revision) == "samcnpc.config.denied")
+        check(NpcSettingsNetwork.apply(guest, true, List(NpcSetting.entries.size) { SettingChoice.YES }, revision) == "samcnpc.config.denied")
         check(NpcSettingsConfig.revision == revision)
         val operator = ServerPlayer(level.server, level, GameProfile(UUID.randomUUID(), "settings-op"))
         level.server.playerList.ops.add(ServerOpListEntry(operator.gameProfile, 2, false))
         try {
-            check(NpcSettingsNetwork.apply(operator, true, List(7) { SettingChoice.YES }, revision - 1) == "samcnpc.config.stale")
+            check(NpcSettingsNetwork.apply(operator, true, List(NpcSetting.entries.size) { SettingChoice.YES }, revision - 1) == "samcnpc.config.stale")
+            val invalidKeep = NpcSettingsConfig.global.choices().toMutableList()
+            invalidKeep[NpcSetting.KEEP_INVENTORY.ordinal] = SettingChoice.YES
+            check(NpcSettingsNetwork.apply(operator, true, invalidKeep, NpcSettingsConfig.revision) == "samcnpc.config.requires_respawn")
+            check(!NpcSettingsConfig.deathPolicy().respawn)
+            check(NpcSettingsConfig.global.choice(NpcSetting.KEEP_INVENTORY) == SettingChoice.DEFAULT)
             set(NpcSetting.TOOL_DURABILITY, SettingChoice.NO)
             val attemptedWorld = NpcSettingsConfig.world.choices().toMutableList()
             attemptedWorld[NpcSetting.TOOL_DURABILITY.ordinal] = SettingChoice.YES

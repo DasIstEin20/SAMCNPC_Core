@@ -1,5 +1,6 @@
 package io.samcnpc.core.gametest
 
+import net.minecraftforge.common.MinecraftForge
 import io.samcnpc.core.SamcnpcCore
 import io.samcnpc.core.api.NpcControlInput
 import io.samcnpc.core.api.NpcDismissMode
@@ -379,8 +380,11 @@ object SamcnpcCoreGameTests {
             helper.fail("Could not add ranged target fixture")
             return
         }
+        val probe = GameTestProjectileProbe(npc.uuid)
+        MinecraftForge.EVENT_BUS.register(probe)
         val started = npc.startRangedAttack(target.uuid, NpcHand.MAIN)
         if (started.status.name != "ACCEPTED" || !npc.isUsingItem) {
+            MinecraftForge.EVENT_BUS.unregister(probe)
             helper.fail("Bow ranged action did not enter synchronized held-use state: ${started.code}: ${started.detail}")
             return
         }
@@ -391,16 +395,16 @@ object SamcnpcCoreGameTests {
             }
         }
         helper.runAfterDelay(28) {
-            if (npc.snapshot().rangedAttack != null) {
-                helper.fail("Bow ranged action did not terminate after full charge")
-                return@runAfterDelay
-            }
-            if (helper.level.getEntitiesOfClass(AbstractArrow::class.java, npc.boundingBox.inflate(32.0)).isEmpty()) {
-                helper.fail("Bow ranged action did not create an arrow projectile")
-            } else if (npc.menuInventoryStack(9).count != 1) {
-                helper.fail("Bow ranged action did not consume exactly one ordinary-inventory arrow")
-            } else {
+            try {
+                check(npc.snapshot().rangedAttack == null) { "Bow ranged action did not terminate after full charge" }
+                check(probe.arrows.size == 1) { "Bow ranged action created ${probe.arrows.size} arrows for this NPC; expected one" }
+                check(npc.menuInventoryStack(9).count == 1) { "Bow ranged action did not consume exactly one ordinary-inventory arrow" }
+                check(npc.mainHandItem.damageValue == 1) { "Bow shot did not charge exactly one durability point" }
+                val result = npc.snapshot().recentCompletions.single { it.result.actionId == started.actionId }.result
+                check(result.status.name == "SUCCEEDED") { "Bow shot did not complete its accepted action: $result" }
                 helper.succeed()
+            } finally {
+                MinecraftForge.EVENT_BUS.unregister(probe)
             }
         }
     }

@@ -35,6 +35,12 @@ data class NpcSnapshot(
     val ignoreMissingMiningTool: Boolean = false,
     /** Server configuration requires an empty selected hand for block work. */
     val bareHandsMiningOnly: Boolean = false,
+    val control: NpcControlState? = null,
+    val navigation: NpcNavigationState? = null,
+    /** At most sixteen immutable terminal results; transient and never restored from NBT. */
+    val recentCompletions: List<NpcActionCompletion> = emptyList(),
+    /** Identity of the latest accepted entity-caused hit; transient, stable between hits. */
+    val lastDamageEventId: UUID? = null,
 )
 
 data class NpcPosition(val x: Double, val y: Double, val z: Double)

@@ -10,6 +10,8 @@ interface NpcWorldView {
     fun queryEntities(query: NpcEntityQuery): List<NpcEntityObservation>
     fun observeBlock(position: NpcBlockPosition): NpcBlockObservation?
     fun observeBlockContainer(position: NpcBlockPosition): NpcBlockContainerObservation?
+    /** Actual standing hull clearance, solid foot contact and fluid presence; null means unavailable. */
+    fun observeStandingSpace(feet: NpcPosition): NpcStandingSpaceObservation? = null
     fun raycast(request: NpcRaycastRequest): NpcRaycastResult
 }
 
@@ -23,6 +25,8 @@ data class NpcEntityObservation(
     val healthFraction: Double?,
     /** Immutable contents only for an observed ItemEntity; null for every other entity type. */
     val itemStack: NpcItemStackSnapshot? = null,
+    /** Living-entity facts relative to this observer; null for non-living entities. */
+    val combat: NpcEntityCombatObservation? = null,
 )
 
 data class NpcEntityQuery(
@@ -68,3 +72,11 @@ sealed interface NpcRaycastResult {
     data object Miss : NpcRaycastResult
     data class Rejected(val detail: String) : NpcRaycastResult
 }
+
+/** Mechanical facts only; Behavior decides whether this is a suitable work/landing position. */
+data class NpcStandingSpaceObservation(
+    val feet: NpcPosition,
+    val clear: Boolean,
+    val supported: Boolean,
+    val inFluid: Boolean,
+)

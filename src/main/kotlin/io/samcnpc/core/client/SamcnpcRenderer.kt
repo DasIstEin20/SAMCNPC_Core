@@ -27,6 +27,8 @@ class SamcnpcRenderer(context: EntityRendererProvider.Context) : MobRenderer<Sam
 ) {
     private val classicModel = model
     private val slimModel = NpcPlayerModel(context.bakeLayer(ModelLayers.PLAYER_SLIM), true)
+    private var frameSkin: ResolvedNpcSkin? = null
+    private var frameEntityId = -1
 
     init {
         addLayer(
@@ -41,13 +43,30 @@ class SamcnpcRenderer(context: EntityRendererProvider.Context) : MobRenderer<Sam
     }
 
     override fun render(entity: SamcnpcEntity, yaw: Float, partialTick: Float, poseStack: com.mojang.blaze3d.vertex.PoseStack, buffer: net.minecraft.client.renderer.MultiBufferSource, packedLight: Int) {
-        val selectedModel = if (entity.clientSkinModel() == PlayerSkinModel.SLIM) slimModel else classicModel
+        val skin = SamcnpcSkinCache.skinFor(entity)
+        val selectedModel = if (skin.model == PlayerSkinModel.SLIM) slimModel else classicModel
+        val previousSkin = frameSkin
+        val previousEntityId = frameEntityId
+        val previousModel = model
+        // A skin callback must not pair a newly resolved texture with this frame's old geometry.
+        frameSkin = skin
+        frameEntityId = entity.id
         configureArmPoses(entity, selectedModel)
         model = selectedModel
-        super.render(entity, yaw, partialTick, poseStack, buffer, packedLight)
+        try {
+            super.render(entity, yaw, partialTick, poseStack, buffer, packedLight)
+        } finally {
+            frameSkin = previousSkin
+            frameEntityId = previousEntityId
+            model = previousModel
+        }
     }
 
-    override fun getTextureLocation(entity: SamcnpcEntity): ResourceLocation = SamcnpcSkinCache.skinFor(entity)
+    override fun getTextureLocation(entity: SamcnpcEntity): ResourceLocation {
+        val current = frameSkin
+        if (frameEntityId == entity.id && current != null) return current.texture
+        return SamcnpcSkinCache.skinFor(entity).texture
+    }
 
     /** Rendering derives the complete player-style arm state from synchronized mechanics. */
     private fun configureArmPoses(entity: SamcnpcEntity, playerModel: PlayerModel<SamcnpcEntity>) {
@@ -129,13 +148,15 @@ class SamcnpcRenderer(context: EntityRendererProvider.Context) : MobRenderer<Sam
  * Clients submit a profile snapshot once per skin revision to Minecraft's SkinManager. Rendering
  * stays cache-only and falls back to DefaultPlayerSkin while the normal Minecraft lookup finishes.
  */
+private data class ResolvedNpcSkin(val texture: ResourceLocation, val model: PlayerSkinModel)
+
 private object SamcnpcSkinCache {
     private data class Key(val sourceUuid: UUID, val revision: String)
 
-    private val resolved: MutableMap<Key, ResourceLocation> = ConcurrentHashMap()
+    private val resolved: MutableMap<Key, ResolvedNpcSkin> = ConcurrentHashMap()
     private val requested: MutableSet<Key> = ConcurrentHashMap.newKeySet()
 
-    fun skinFor(entity: SamcnpcEntity): ResourceLocation {
+    fun skinFor(entity: SamcnpcEntity): ResolvedNpcSkin {
         val sourceUuid = entity.clientSummonerUuid() ?: entity.uuid
         val key = Key(sourceUuid, entity.clientSkinRevision().ifEmpty { "default" })
         val current = resolved[key]
@@ -143,7 +164,12 @@ private object SamcnpcSkinCache {
             return current
         }
         submitIfNeeded(entity, key)
-        return DefaultPlayerSkin.getDefaultSkin(sourceUuid)
+        val defaultModel = if (DefaultPlayerSkin.getSkinModelName(sourceUuid) == "slim") {
+            PlayerSkinModel.SLIM
+        } else {
+            PlayerSkinModel.CLASSIC
+        }
+        return ResolvedNpcSkin(DefaultPlayerSkin.getDefaultSkin(sourceUuid), defaultModel)
     }
 
     private fun submitIfNeeded(entity: SamcnpcEntity, key: Key) {
@@ -154,9 +180,10 @@ private object SamcnpcSkinCache {
         pruneFor(key)
         val profile = GameProfile(key.sourceUuid, entity.clientSummonerName().ifEmpty { key.sourceUuid.toString().take(16) })
         profile.properties.put("textures", com.mojang.authlib.properties.Property("textures", property, entity.clientSkinSignature()))
-        Minecraft.getInstance().skinManager.registerSkins(profile, { type, location, _ ->
-            if (type == com.mojang.authlib.minecraft.MinecraftProfileTexture.Type.SKIN) {
-                resolved[key] = location
+        Minecraft.getInstance().skinManager.registerSkins(profile, { type, location, texture ->
+            if (type == com.mojang.authlib.minecraft.MinecraftProfileTexture.Type.SKIN && requested.contains(key)) {
+                val model = if (texture.getMetadata("model") == "slim") PlayerSkinModel.SLIM else PlayerSkinModel.CLASSIC
+                resolved[key] = ResolvedNpcSkin(location, model)
             }
         }, false)
     }

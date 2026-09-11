@@ -14,6 +14,7 @@ object NpcDirectoryEvents {
     fun registerLoadedNpc(event: EntityJoinLevelEvent) {
         val level = event.level as? ServerLevel ?: return
         val npc = event.entity as? SamcnpcEntity ?: return
+        io.samcnpc.core.health.NpcRespawns.data(level.server).spawnPoint(npc.uuid)?.let(npc::setRespawnPoint)
         CoreNpcApi.register(npc, level.server)
         NpcActivityEvents.runtime(level.server).register(npc)
     }

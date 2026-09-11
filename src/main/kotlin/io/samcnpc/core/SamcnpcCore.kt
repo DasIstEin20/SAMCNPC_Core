@@ -9,6 +9,7 @@ import io.samcnpc.core.config.NpcHostileTargeting
 import io.samcnpc.core.entity.ModEntities
 import io.samcnpc.core.entity.SamcnpcEntity
 import io.samcnpc.core.event.SummonerLifecycleEvents
+import io.samcnpc.core.event.NpcItemUseEvents
 import io.samcnpc.core.event.NpcDirectoryEvents
 import io.samcnpc.core.inventory.ModMenus
 import net.minecraftforge.common.MinecraftForge
@@ -33,8 +34,10 @@ class SamcnpcCore {
         MinecraftForge.EVENT_BUS.register(SamcnpcCommands)
         MinecraftForge.EVENT_BUS.register(SummonerLifecycleEvents)
         MinecraftForge.EVENT_BUS.register(NpcDirectoryEvents)
+        MinecraftForge.EVENT_BUS.register(NpcItemUseEvents)
         MinecraftForge.EVENT_BUS.register(NpcActivityEvents)
         MinecraftForge.EVENT_BUS.register(NpcHostileTargeting)
+        MinecraftForge.EVENT_BUS.register(io.samcnpc.core.health.NpcRespawns)
     }
 
     private fun registerAttributes(event: EntityAttributeCreationEvent) {

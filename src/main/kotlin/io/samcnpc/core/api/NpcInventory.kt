@@ -42,3 +42,17 @@ enum class NpcEquipmentDestination {
     LEGS,
     FEET,
 }
+
+/**
+ * One supported NBT load, captured before the body's first tick. The generation is transient,
+ * identifies only this load observation, and is never an action ID or a persistent identity.
+ * Main hand aliases the selected inventory slot and must not be counted a second time.
+ */
+class NpcInventoryLoadSnapshot(
+    val generation: java.util.UUID,
+    inventory: List<NpcItemStackSnapshot>,
+    val equipment: NpcEquipmentSnapshot,
+) {
+    val inventory: List<NpcItemStackSnapshot> = java.util.List.copyOf(inventory)
+    init { require(inventory.size == 36) { "loaded NPC inventory must contain exactly 36 slots" } }
+}

@@ -10,6 +10,7 @@ import net.minecraft.world.entity.EquipmentSlot
 import net.minecraft.world.entity.Mob
 import net.minecraft.world.entity.player.Inventory
 import net.minecraft.world.entity.player.Player
+import net.minecraft.world.inventory.ClickType
 import net.minecraft.world.inventory.AbstractContainerMenu
 import net.minecraft.world.inventory.Slot
 import net.minecraft.world.item.ItemStack
@@ -42,7 +43,7 @@ class NpcEquipmentMenu private constructor(
         mainHandAlias = NpcSelectedHotbarContainer(npc, controller),
         valid = { player ->
             player.uuid == controller.uuid &&
-                !npc.isRemoved &&
+                npc.isAlive && !npc.isRemoved &&
                 npc.level() == controller.level() &&
                 npc.isControlledBy(controller) &&
                 npc.distanceToSqr(controller) <= MAX_OPEN_DISTANCE_SQR
@@ -67,7 +68,13 @@ class NpcEquipmentMenu private constructor(
 
     override fun stillValid(player: Player): Boolean = valid(player)
 
+    override fun clicked(slotId: Int, button: Int, clickType: ClickType, player: Player) {
+        if (!valid(player)) return
+        super.clicked(slotId, button, clickType, player)
+    }
+
     override fun quickMoveStack(player: Player, index: Int): ItemStack {
+        if (!valid(player)) return ItemStack.EMPTY
         val slot = slots.getOrNull(index) ?: return ItemStack.EMPTY
         if (!slot.hasItem()) {
             return ItemStack.EMPTY

@@ -38,6 +38,7 @@ enum class NpcActionCode {
     UNSUPPORTED_MECHANIC,
     CANCELLED,
     EXPIRED,
+    NO_PROGRESS,
 }
 
 data class NpcActionResult(

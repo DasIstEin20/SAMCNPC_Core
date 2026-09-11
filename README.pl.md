@@ -161,6 +161,9 @@ Kliknij **Zastosuj** przed zmianą zakładki lub zamknięciem; niezapisane zmian
 | Zużywanie narzędzi | Yes |
 | Ignore missing tool | No |
 | Praca wyłącznie ręką | No |
+| Respawn | No |
+| Keep inventory (wymaga Respawn) | No |
+| Drop items after being killed | Yes |
 
 Default w obu zakładkach zachowuje wcześniejsze komendy animacji/chunków poszczególnych
 NPC i ustawienie hearts świata. Wymuszona wartość GUI blokuje odpowiednie komendy;
@@ -178,6 +181,31 @@ Ustawienia globalne są w `config/samcnpc-core-global.toml`, a świata w
 `<zapis>/serverconfig/samcnpc-core-world.toml`. Zmiany podczas gry potwierdza serwer;
 może je zapisać host świata lub operator. Lokalna konfiguracja klienta nie nadpisuje serwera
 multiplayer. Zmiany działają na obecne NPC bez ponownego uruchamiania świata.
+
+## Respawn, ekwipunek i punkt odradzania
+
+Ekran konfiguracji Forge udostępnia **Respawn**, **Keep inventory** i **Drop items after being killed**
+w zakładkach Global oraz In world. Keep inventory jest dostępne po włączeniu efektywnego Respawn.
+Zachowane przedmioty nie są jednocześnie wyrzucane. Przy wyłączonym zachowaniu opcja Drop items
+wybiera między rzeczywistymi dropami a usunięciem przedmiotów. Zasada obejmuje plecak, zbroję,
+drugą rękę i rezerwy.
+
+NPC domyślnie odradza się w miejscu pierwotnego przywołania po 100 tickach gry, z uwzględnieniem
+gotowości chunków i bezpiecznego miejsca do stania. Punkt można zmienić:
+
+```text
+/samcnpc setspawnpoint Sam
+/samcnpc setspawnpoint Sam 100 64 200
+/samcnpc setspawnpoint all
+```
+
+Bez współrzędnych używana jest pozycja źródła komendy w bieżącym wymiarze. Nazwa/UUID wskazuje
+pojedynczego NPC; `all` wymaga poziomu operatora 2. Komenda obejmuje uprawnione postacie wczytane,
+zindeksowane niewczytane oraz oczekujące na respawn. Nowe przywołania zachowują własny punkt.
+Pojedynczą postać zmienia jej summoner lub operator. Punkt i kolejka respawnu przetrwają restart.
+
+Totem w rezerwie chroni automatycznie także przy obu zajętych rękach. Totemy trzymane w rękach
+mają pierwszeństwo. Ta mechanika Core nie wymaga paczki Behavior.
 
 ## Efekty vanilli
 
@@ -220,7 +248,8 @@ Dodatek wybiera cel i interpretuje wynik akcji. Core wykonuje i waliduje mechani
 .\gradlew.bat runGameTestServer
 .\gradlew.bat runClientAnimationSmoke
 .\gradlew.bat runClientConfigSmoke
-.\gradlew.bat runChunkSmokeSave runChunkSmokeLoad
+.\gradlew.bat runChunkSmokeSave runChunkSmokeLoad -PchunkSmokeId=example1
+.\gradlew.bat runRespawnSmokeSave runRespawnSmokeLoad -PrespawnSmokeId=example1
 python tools/check_core_boundary.py
 ```
 
@@ -230,11 +259,13 @@ wyłączenie i ponowne włączenie animacji (52 scenariusze). Klient zamyka się
 zakończeniu, a brak poprawnego wyniku powoduje błąd zadania Gradle. Kod tego testu nie trafia do JAR-a.
 `runClientConfigSmoke` sprawdza prawdziwy ekran Forge, potwierdzenia serwera, synchronizację
 postaci, niezależność dwóch zapisów i ponowne wczytanie. Używa katalogu `run-config-smoke/`.
-25 serwerowych GameTestów Core obejmuje m.in. podwójne skrzynki, wszystkie 33 efekty vanilli,
+93 serwerowe GameTesty Core obejmuje m.in. podwójne skrzynki, wszystkie 33 efekty vanilli,
 pracę ręką, zużywanie narzędzi, wrogość mobów i rzeczywiste tickety chunków.
 Test chunków uruchamia dwa osobne procesy serwera i używa izolowanego zapisu `run-chunk-smoke`,
 sprawdzając generowanie terenu, zapis NPC/ekwipunku i automatyczne tickowanie po restarcie bez graczy.
-Uruchom kolejno save i load; przed powtórzeniem pary zarchiwizuj poprzedni katalog `run-chunk-smoke`.
+Uruchom save i load z tym samym ID; dla nowej pary wybierz nowe ID. GameTesty mają świeży płaski
+świat w świeżym katalogu `run-gametest-<id>/`, oddzielny od zwykłych zapisów. Para respawnu używa dwóch zwykłych JVM
+serwera i sprawdza oczekujące postacie, zachowany ekwipunek oraz zmienione punkty odradzania.
 Zwykły serwer uruchamiany przez `runServer` wymaga zaakceptowania EULA Minecrafta przez użytkownika.
 
 ## Stan projektu
@@ -244,8 +275,8 @@ wymagających bezpośrednio obiektu `Player` pozostaje nieobsługiwana. Dotyczy 
 walki/interakcji oraz niektórych przedmiotów z innych modów. Nieobsługiwane ścieżki zwracają jawny
 wynik `UNSUPPORTED`. Pełna zgodność zachowania z graczem i dowolnym modpackiem nie jest gwarantowana.
 
-Rezerwa totemu jest miejscem przechowywania; totem musi znaleźć się w ręce, aby działać według
-normalnej mechaniki. Skórki kont online, zgodność z modami ochrony terenu oraz zaawansowane
+Totem w rezerwie chroni automatycznie po sprawdzeniu totemów w rękach. Zużywa jedną sztukę
+bez zamiany przedmiotów w rękach, respektuje anulowanie Forge oraz obrażenia omijające totem. Skórki kont online, zgodność z modami ochrony terenu oraz zaawansowane
 przypadki broni i zaklęć wymagają osobnych testów integracyjnych.
 
 ## Licencja

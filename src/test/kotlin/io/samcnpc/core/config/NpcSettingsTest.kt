@@ -28,8 +28,11 @@ class NpcSettingsTest {
     fun `both hand-work exceptions are opt in and snapshots have a fixed schema`() {
         assertFalse(NpcSetting.IGNORE_MISSING_TOOL.factoryDefault)
         assertFalse(NpcSetting.BARE_HANDS_ONLY.factoryDefault)
+        assertFalse(NpcSetting.RESPAWN.factoryDefault)
+        assertFalse(NpcSetting.KEEP_INVENTORY.factoryDefault)
+        assertTrue(NpcSetting.DROP_ITEMS_ON_DEATH.factoryDefault)
         assertFailsWith<IllegalArgumentException> { NpcSettingsSnapshot(emptyList(), emptyList(), 0, true) }
         val choices = List(NpcSetting.entries.size) { SettingChoice.DEFAULT }
-        assertEquals(7, NpcSettingsSnapshot(choices, choices, 0, false).global.size)
+        assertEquals(10, NpcSettingsSnapshot(choices, choices, 0, false).global.size)
     }
 }
