@@ -5,7 +5,7 @@ import io.samcnpc.core.activity.NpcActivityEvents
 import io.samcnpc.core.entity.SamcnpcEntity
 import net.minecraft.server.level.ServerLevel
 import net.minecraftforge.event.entity.EntityJoinLevelEvent
-import net.minecraftforge.event.server.ServerStoppingEvent
+import net.minecraftforge.event.server.ServerStoppedEvent
 import net.minecraftforge.eventbus.api.SubscribeEvent
 
 /** Keeps the per-server Core directory correct across summon and chunk load without world scans. */
@@ -19,8 +19,9 @@ object NpcDirectoryEvents {
         NpcActivityEvents.runtime(level.server).register(npc)
     }
 
+    // Dispose after consumers release controls and native entity/world cleanup has finished.
     @SubscribeEvent
-    fun releaseServer(event: ServerStoppingEvent) {
+    fun releaseServer(event: ServerStoppedEvent) {
         CoreNpcApi.release(event.server)
     }
 }

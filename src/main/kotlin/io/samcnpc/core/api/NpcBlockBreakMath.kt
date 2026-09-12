@@ -3,9 +3,11 @@ package io.samcnpc.core.api
 /** Vanilla-style destroy-progress maths, isolated from world mutation for focused tests. */
 object NpcBlockBreakMath {
     fun progressPerTick(toolSpeed: Float, hardness: Float, canHarvest: Boolean): Float {
-        if (hardness <= 0.0F || toolSpeed <= 0.0F) {
+        if (!hardness.isFinite() || !toolSpeed.isFinite() || hardness < 0.0F || toolSpeed <= 0.0F) {
             return 0.0F
         }
+        // Vanilla positive dig speed divided by zero hardness completes in one strike.
+        if (hardness == 0.0F) return 1.0F
         val divisor = if (canHarvest) HARVEST_DIVISOR else HAND_DIVISOR
         return toolSpeed / hardness / divisor
     }

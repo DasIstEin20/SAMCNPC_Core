@@ -259,7 +259,7 @@ when finished, and a missing or unsuccessful result fails the Gradle task. The t
 included in the shipped JAR.
 `runClientConfigSmoke` exercises the real Forge config screen, server acknowledgements,
 client entity synchronization, two independent saves and reload. It uses `run-config-smoke/`
-and fails if its result is missing. Core's 93 dedicated GameTests include double chests,
+and fails if its result is missing. Core's 103 dedicated GameTests include double chests,
 all 33 vanilla effects, tool modes, durability, hostile targeting and real chunk tickets.
 The chunk smoke uses two separate server JVMs and an isolated `run-chunk-smoke` save to verify
 terrain generation, NPC/inventory persistence and automatic ticking after restart, with zero players.
@@ -269,6 +269,11 @@ dedicated server JVMs and verifies pending bodies, retained inventory and change
 A normal server launched with `runServer` requires the user to accept Minecraft's EULA.
 
 ## Project status
+
+This snapshot includes 36 unit tests and mechanical observations for crops, food, tools
+and block environments. Inactive NPC history is bounded to 4096 entries. Final server shutdown
+releases the Core service and rejects recreation after stop. The skin test with two genuinely
+signed-in Minecraft accounts remains pending.
 
 Development version **0.1.0**. The NPC is a dedicated entity, so some features and integrations
 that directly require a `Player` object remain unsupported. These include some combat/interaction

@@ -5,9 +5,11 @@ import java.util.UUID
 /** A server-owned public entry point. It exposes handles and capability facades, never entities. */
 interface NpcCoreService {
     fun summon(request: NpcSummonRequest): NpcSummonResult
+    /** A known handle may be inactive; only runtime(handle) grants a live capability. */
     fun find(npcUuid: UUID): NpcHandle?
     fun loadedBySummoner(summonerUuid: UUID): List<NpcHandle>
     fun loadedNearby(query: NpcLoadedQuery): List<NpcHandle>
+    /** Loaded identities plus the latest 4096 inactive transitions in this server session. */
     fun lifecycle(npcUuid: UUID): NpcLifecycleSnapshot?
     fun runtime(handle: NpcHandle): NpcFacade?
     fun dismiss(handle: NpcHandle, mode: NpcDismissMode): NpcActionResult

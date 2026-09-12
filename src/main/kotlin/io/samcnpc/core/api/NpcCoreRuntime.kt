@@ -13,8 +13,19 @@ internal object NpcCoreRuntime {
     private val services: MutableMap<MinecraftServer, NpcCoreServiceImpl> = IdentityHashMap()
 
     fun service(server: MinecraftServer): NpcCoreServiceImpl {
+        val current = existing(server)
+        if (current != null) return current
+        // Forge sets isStopped before native entity cleanup, but after stopping listeners.
+        // Keep an existing service through that cleanup; never recreate one after disposal.
+        check(!server.isStopped) { "Core NPC service cannot be created for a stopped server" }
+        val created = NpcCoreServiceImpl(server)
+        services[server] = created
+        return created
+    }
+
+    fun existing(server: MinecraftServer): NpcCoreServiceImpl? {
         check(server.isSameThread) { "Core NPC service requires the authoritative server thread" }
-        return services.getOrPut(server) { NpcCoreServiceImpl(server) }
+        return services[server]
     }
 
     fun release(server: MinecraftServer) {

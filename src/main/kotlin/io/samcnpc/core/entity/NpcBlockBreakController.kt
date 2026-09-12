@@ -38,7 +38,7 @@ internal class NpcBlockBreakController(
         val state = body.level().getBlockState(blockPos)
         val rejection = validateBlockBreak(blockPos, state)
         if (rejection != null) return rejection
-        val toolRejection = NpcMiningTools.prepare(body, state)
+        val toolRejection = NpcMiningTools.prepare(body, state, blockPos)
         if (toolRejection != null) return toolRejection
         val actionId = UUID.randomUUID()
         active = Active(actionId, blockPos, state.block, body.mainHandItem, 0.0F, body.level().gameTime + LEASE_TICKS)
@@ -121,7 +121,7 @@ internal class NpcBlockBreakController(
             return
         }
         val tool = body.mainHandItem
-        val toolRejection = NpcMiningTools.validate(state, tool)
+        val toolRejection = NpcMiningTools.validate(state, tool, state.getDestroySpeed(body.level(), action.position))
         if (toolRejection != null) {
             clearBlockBreak(
                 action,

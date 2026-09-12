@@ -35,6 +35,7 @@ class SamcnpcCore {
         MinecraftForge.EVENT_BUS.register(SummonerLifecycleEvents)
         MinecraftForge.EVENT_BUS.register(NpcDirectoryEvents)
         MinecraftForge.EVENT_BUS.register(NpcItemUseEvents)
+        MinecraftForge.EVENT_BUS.register(io.samcnpc.core.api.NpcItemClassifier)
         MinecraftForge.EVENT_BUS.register(NpcActivityEvents)
         MinecraftForge.EVENT_BUS.register(NpcHostileTargeting)
         MinecraftForge.EVENT_BUS.register(io.samcnpc.core.health.NpcRespawns)

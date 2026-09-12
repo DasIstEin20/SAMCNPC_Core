@@ -402,7 +402,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
 
     override fun snapshot(): NpcSnapshot {
         val hurtAge = if (recentHurtGameTime == Long.MIN_VALUE) null else (level().gameTime - recentHurtGameTime).coerceAtLeast(0)
-        val fraction = if (maxHealth <= 0.0F) 0.0 else (health / maxHealth).toDouble().coerceIn(0.0, 1.0)
+        val fraction = if (maxHealth <= 0.0F) 0.0 else (health.toDouble() / maxHealth.toDouble()).coerceIn(0.0, 1.0)
         return NpcSnapshot(
             npcUuid = uuid,
             summonerUuid = summonerBinding?.summonerUuid,
@@ -899,8 +899,13 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         if (stack.isEmpty) {
             return NpcActionResult.rejected("${hand.name.lowercase()} hand is empty", NpcActionCode.NOT_READY, NpcActionChannel.INTERACTION)
         }
+        val blockBeforeUse = level().getBlockState(blockPos)
+        val vanillaHoe = stack.item is net.minecraft.world.item.HoeItem &&
+            net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(stack.item)?.namespace == "minecraft"
         val result = try {
-            stack.useOn(UseOnContext(level(), null, interactionHand, stack, BlockHitResult(location, hit.face.toDirection(), blockPos, hit.insideBlock)))
+            NpcToolDurability.perform(stack) {
+                stack.useOn(UseOnContext(level(), null, interactionHand, stack, BlockHitResult(location, hit.face.toDirection(), blockPos, hit.insideBlock)))
+            }
         } catch (error: ClassCastException) {
             return NpcActionResult.unsupported("${itemId(stack)} requires a real Player for block use", NpcActionChannel.INTERACTION)
         } catch (error: NullPointerException) {
@@ -910,6 +915,11 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         }
         if (!result.consumesAction()) {
             return NpcActionResult.rejected("${itemId(stack)} did not accept the supplied block hit", NpcActionCode.WORLD_REJECTED, NpcActionChannel.INTERACTION)
+        }
+        // Vanilla HoeItem.useOn skips durability when its nullable Player is absent. The normal
+        // soil callback already ran; charge its one real tool use on this living body (ADR 0044).
+        if (vanillaHoe && level().getBlockState(blockPos) != blockBeforeUse) {
+            NpcToolDurability.perform(stack) { stack.hurtAndBreak(1, this) { it.broadcastBreakEvent(interactionHand) } }
         }
         if (interactionHand == InteractionHand.MAIN_HAND) {
             refreshMainHandAttributes()
@@ -957,37 +967,26 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      */
     override fun placeHeldBlock(placement: NpcBlockPlacement, hand: NpcHand): NpcActionResult {
         val target = BlockPos(placement.position.x, placement.position.y, placement.position.z)
+        // Bound reads here; useItemOnBlock still validates the actual support hit at normal reach.
+        if (distanceToSqr(target.center) > PLACEMENT_PREFLIGHT_REACH_SQR) {
+            return NpcActionResult.rejected("placement target is out of interaction reach", NpcActionCode.OUT_OF_RANGE, NpcActionChannel.BLOCK_ACTION)
+        }
+        val face = placement.againstFace.toDirection()
+        val clicked = target.relative(face.opposite)
+        if (!level().hasChunkAt(target) || !level().hasChunkAt(clicked)) {
+            return NpcActionResult.rejected("placement target or support is unavailable", NpcActionCode.NOT_READY, NpcActionChannel.BLOCK_ACTION)
+        }
         if (!level().getBlockState(target).canBeReplaced()) {
             return NpcActionResult.rejected("block position is not replaceable", NpcActionCode.WORLD_REJECTED, NpcActionChannel.BLOCK_ACTION)
         }
         val stack = getItemInHand(hand.toInteractionHand())
         val blockItem = stack.item as? BlockItem
             ?: return NpcActionResult.rejected("held item is not a placeable block", NpcActionCode.INVALID_REQUEST, NpcActionChannel.BLOCK_ACTION)
-        val face = placement.againstFace.toDirection()
-        val clicked = target.relative(face.opposite)
         if (level().getBlockState(clicked).isAir) {
             return NpcActionResult.rejected("placement needs a non-air supporting block", NpcActionCode.WORLD_REJECTED, NpcActionChannel.BLOCK_ACTION)
         }
-        // Aim a hair inside the clicked block instead of ending exactly on the shared voxel
-        // boundary. Clip may otherwise classify a downward pillar ray as a miss even though a
-        // normal player is plainly looking at the support's top face.
-        val hitLocation = clicked.center.add(
-            face.stepX * (0.5 - PLACEMENT_FACE_INSET),
-            face.stepY * (0.5 - PLACEMENT_FACE_INSET),
-            face.stepZ * (0.5 - PLACEMENT_FACE_INSET),
-        )
-        val directHit = level().clip(
-            ClipContext(
-                eyePosition,
-                hitLocation,
-                ClipContext.Block.OUTLINE,
-                ClipContext.Fluid.NONE,
-                this,
-            ),
-        )
-        if (directHit.type != HitResult.Type.BLOCK || directHit.blockPos != clicked) {
-            return NpcActionResult.rejected("placement support is not visible from the NPC eye", NpcActionCode.WORLD_REJECTED, NpcActionChannel.BLOCK_ACTION)
-        }
+        val hitLocation = NpcPlacementSurface.visiblePoint(this,clicked,face)
+            ?: return NpcActionResult.rejected("placement support face is not visible from the NPC eye", NpcActionCode.WORLD_REJECTED, NpcActionChannel.BLOCK_ACTION)
         val collision = blockItem.block.defaultBlockState().getCollisionShape(level(), target)
         if (!collision.isEmpty && collision.toAabbs().any { box ->
                 boundingBox.intersects(box.move(target.x.toDouble(), target.y.toDouble(), target.z.toDouble()))
@@ -1007,14 +1006,17 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
 
     override fun useInteractiveBlock(position: NpcBlockPosition): NpcActionResult {
         val blockPos = BlockPos(position.x, position.y, position.z)
-        val state = level().getBlockState(blockPos)
-        if (state.isAir) {
-            return NpcActionResult.rejected("block is air")
-        }
         if (distanceToSqr(blockPos.center) > BLOCK_INTERACTION_REACH_SQR) {
             return NpcActionResult.rejected("block is out of interaction reach")
         }
+        if (!level().hasChunkAt(blockPos)) return NpcActionResult.rejected("interactive block is not loaded",NpcActionCode.NOT_READY)
+        val state = level().getBlockState(blockPos)
+        if (state.isAir) return NpcActionResult.rejected("block is air")
         val block = state.block
+        if (block is net.minecraft.world.level.block.SweetBerryBushBlock) {
+            if (rangedController.isActive || blockBreakController.isActive || isUsingItem) return NpcActionResult.rejected("cancel conflicting hand actions before using a ripe bush",NpcActionCode.CONFLICT)
+            return NpcBerryInteraction.use(this,blockPos,state)
+        }
         when (block) {
             is DoorBlock -> block.setOpen(this, level(), state, blockPos, !block.isOpen(state))
             is ButtonBlock -> block.press(state, level(), blockPos)
@@ -1484,8 +1486,8 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         private const val THROWN_POTION_SPEED = 0.5F
         private const val THROWN_POTION_INACCURACY = 1.0F
         private const val BLOCK_PLACE_REACH_SQR = 4.5 * 4.5
+        private const val PLACEMENT_PREFLIGHT_REACH_SQR = 7.0 * 7.0
         private const val BLOCK_INTERACTION_REACH_SQR = 4.5 * 4.5
-        private const val PLACEMENT_FACE_INSET = 0.001
         private const val ENTITY_INTERACTION_REACH_SQR = 4.5 * 4.5
         private const val ENTITY_HIT_TOLERANCE = 0.25
         private const val MAX_HIT_OFFSET_SQR = 1.5 * 1.5

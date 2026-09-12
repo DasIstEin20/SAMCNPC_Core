@@ -159,7 +159,7 @@ tasks.register('syncGameTestStructures', Copy) {
     from layout.projectDirectory.dir('src/main/resources/gameteststructures')
     into layout.projectDirectory.dir("${coreGameTestDirectory}/gameteststructures")
     doLast {
-        // Extended test arenas must have flat terrain outside the small SNBT template too.
+        // Extended test arenas need reproducible terrain outside the small SNBT template too.
         project.file("${coreGameTestDirectory}/server.properties").text = '''level-name=world
 level-type=minecraft:flat
 generator-settings={"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:plains"}
@@ -288,4 +288,18 @@ tasks.register('verifyProductionKotlin') {
 
 tasks.named('check').configure {
     dependsOn tasks.named('verifyProductionKotlin')
+}
+
+// A flaky retry can fail after vanilla's original batch tracker has already advanced. Its final
+// aggregate/exit may still be green; an explicit required failure in this run always fails the gate.
+tasks.matching { it.name == 'runGameTestServer' }.configureEach {
+    doLast {
+        def report = new File(workingDir, 'logs/latest.log')
+        if (!report.isFile()) throw new GradleException("GameTest result log is missing: ${report}")
+        def failures = []
+        report.eachLine('UTF-8') { line ->
+            if (line.contains('/ERROR]') && line.contains('LogTestReporter') && line.contains(' failed!')) failures.add(line)
+        }
+        if (!failures.isEmpty()) throw new GradleException("${failures.size()} required GameTest failure(s) despite runner exit: ${failures.first()}. See ${report}")
+    }
 }

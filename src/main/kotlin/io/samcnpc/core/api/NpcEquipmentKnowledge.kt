@@ -10,6 +10,7 @@ import net.minecraft.world.level.EmptyBlockGetter
 import net.minecraft.world.level.block.Block
 import net.minecraft.world.level.block.Blocks
 import net.minecraft.world.level.block.FallingBlock
+import net.minecraft.world.item.ArrowItem
 import net.minecraft.world.item.ArmorItem
 import net.minecraft.world.item.AxeItem
 import net.minecraft.world.item.BlockItem
@@ -35,6 +36,7 @@ enum class NpcItemRole {
     TOOL,
     SHIELD,
     ARMOR,
+    AMMUNITION,
     OTHER,
 }
 
@@ -58,6 +60,8 @@ data class NpcPlaceableBlockKnowledge(
     val functional: Boolean,
     val hasBlockEntity: Boolean,
     val pillarMaterialClass: NpcPillarMaterialClass,
+    /** Loaded vanilla mineable tags; this does not certify a particular tool tier or drop. */
+    val effectiveToolKinds: Set<NpcToolKind> = emptySet(),
 )
 
 /** Server-data tags let a modpack tune the default material ranking without executable policy. */
@@ -75,6 +79,8 @@ data class NpcItemKnowledge(
     val armorDestination: NpcEquipmentDestination? = null,
     /** Null for every non-BlockItem. */
     val placeableBlock: NpcPlaceableBlockKnowledge? = null,
+    val combat: NpcCombatItemFacts = NpcCombatItemFacts.NONE,
+    val edible: Boolean = false,
 ) {
     val isEmpty: Boolean
         get() = itemId == null
@@ -127,10 +133,20 @@ data class NpcEquipmentKnowledge(
  * inspecting item types every NPC tick. The cache intentionally contains no world references.
  */
 internal object NpcItemClassifier {
-    private val cache = ConcurrentHashMap<Item, NpcItemKnowledge>()
+    @Volatile private var cache = ConcurrentHashMap<Item, NpcItemKnowledge>()
 
-    fun profile(stack: ItemStack): NpcItemKnowledge =
-        if (stack.isEmpty) NpcItemKnowledge.EMPTY else cache.computeIfAbsent(stack.item, ::classify)
+    @net.minecraftforge.eventbus.api.SubscribeEvent
+    fun tagsUpdated(event: net.minecraftforge.event.TagsUpdatedEvent) {
+        // Swap the cache so an in-flight classification cannot repopulate the new generation.
+        if (event.shouldUpdateStaticData()) cache = ConcurrentHashMap()
+    }
+
+    fun profile(stack: ItemStack): NpcItemKnowledge {
+        if (stack.isEmpty) return NpcItemKnowledge.EMPTY
+        val base = cache.computeIfAbsent(stack.item, ::classify)
+        val combat = NpcCombatItemObservations.describe(stack, base)
+        return if (combat == NpcCombatItemFacts.NONE) base else base.copy(combat = combat)
+    }
 
     private fun classify(item: Item): NpcItemKnowledge {
         val roles = linkedSetOf<NpcItemRole>()
@@ -169,6 +185,7 @@ internal object NpcItemClassifier {
                 toolKind = NpcToolKind.OTHER
             }
             is ShieldItem -> roles.add(NpcItemRole.SHIELD)
+            is ArrowItem -> roles.add(NpcItemRole.AMMUNITION)
             is ArmorItem -> {
                 roles.add(NpcItemRole.ARMOR)
                 armorDestination = item.equipmentSlot.toNpcEquipmentDestination()
@@ -184,6 +201,7 @@ internal object NpcItemClassifier {
             toolKind = toolKind,
             armorDestination = armorDestination,
             placeableBlock = placeableBlock,
+            edible = item.isEdible,
         )
     }
 
@@ -203,6 +221,11 @@ internal object NpcItemClassifier {
         val hazardous = block == Blocks.CACTUS || block == Blocks.MAGMA_BLOCK ||
             block == Blocks.CAMPFIRE || block == Blocks.SOUL_CAMPFIRE || block == Blocks.POWDER_SNOW ||
             state.`is`(BlockTags.FIRE)
+        val effectiveTools = linkedSetOf<NpcToolKind>()
+        if (state.`is`(BlockTags.MINEABLE_WITH_AXE)) effectiveTools.add(NpcToolKind.AXE)
+        if (state.`is`(BlockTags.MINEABLE_WITH_PICKAXE)) effectiveTools.add(NpcToolKind.PICKAXE)
+        if (state.`is`(BlockTags.MINEABLE_WITH_SHOVEL)) effectiveTools.add(NpcToolKind.SHOVEL)
+        if (state.`is`(BlockTags.MINEABLE_WITH_HOE)) effectiveTools.add(NpcToolKind.HOE)
         return NpcPlaceableBlockKnowledge(
             fullCollision = fullCollision,
             gravityAffected = block is FallingBlock,
@@ -210,6 +233,7 @@ internal object NpcItemClassifier {
             functional = functional,
             hasBlockEntity = state.hasBlockEntity(),
             pillarMaterialClass = materialClass,
+            effectiveToolKinds = java.util.Set.copyOf(effectiveTools),
         )
     }
 

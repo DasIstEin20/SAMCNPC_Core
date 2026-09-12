@@ -4,6 +4,12 @@ import io.samcnpc.core.api.NpcActionChannel
 import io.samcnpc.core.api.NpcActionCode
 import io.samcnpc.core.api.NpcActionResult
 import io.samcnpc.core.api.NpcBlockContainerSlot
+import io.samcnpc.core.api.NpcItemClassifier
+import io.samcnpc.core.api.NpcItemPickupCompletedEvent
+import io.samcnpc.core.api.NpcItemPickupCheckEvent
+import io.samcnpc.core.api.NpcPickupCandidate
+import io.samcnpc.core.api.NpcPosition
+import net.minecraftforge.common.MinecraftForge
 import net.minecraft.sounds.SoundEvents
 import net.minecraft.sounds.SoundSource
 import net.minecraft.world.entity.item.ItemEntity
@@ -15,17 +21,45 @@ internal class NpcInventoryActions(private val body: SamcnpcEntity) {
     fun pickupItem(itemEntityUuid: UUID): NpcActionResult {
         val itemEntity = body.resolveEntity(itemEntityUuid) as? ItemEntity
             ?: return NpcActionResult.rejected("item entity is unavailable in this dimension")
-        if (itemEntity.hasPickUpDelay()) {
-            return NpcActionResult.rejected("item entity cannot be picked up yet")
+        val problem = pickupProblem(itemEntity)
+        if (problem != null) return problem
+        return pickupChecked(itemEntity, checkPickup(listOf(itemEntity)))
+    }
+
+    private fun pickupProblem(itemEntity: ItemEntity): NpcActionResult? {
+        if (!body.isAlive || itemEntity.isRemoved || itemEntity.level() !== body.level()) {
+            return NpcActionResult.rejected("pickup body or item entity is unavailable", NpcActionCode.NOT_READY)
         }
-        if (body.distanceToSqr(itemEntity) > PICKUP_REACH_SQR) {
-            return NpcActionResult.rejected("item entity is out of pickup reach")
+        if (itemEntity.hasPickUpDelay()) return NpcActionResult.rejected("item entity cannot be picked up yet")
+        if (body.distanceToSqr(itemEntity) > PICKUP_REACH_SQR) return NpcActionResult.rejected("item entity is out of pickup reach")
+        if (itemEntity.item.isEmpty) return NpcActionResult.rejected("item entity is empty")
+        return null
+    }
+
+    private fun candidate(item: ItemEntity) = NpcPickupCandidate(
+        item.uuid, NpcPosition(item.x, item.y, item.z), body.itemId(item.item), item.item.count,
+    )
+
+    private fun checkPickup(items: List<ItemEntity>): NpcItemPickupCheckEvent {
+        val event = NpcItemPickupCheckEvent(body.uuid, body.level().dimension().location().toString(),
+            body.level().gameTime, NpcPosition(body.x, body.y, body.z), items.map(::candidate))
+        MinecraftForge.EVENT_BUS.post(event)
+        return event
+    }
+
+    private fun pickupChecked(itemEntity: ItemEntity, permission: NpcItemPickupCheckEvent): NpcActionResult {
+        val denial = permission.denial(itemEntity.uuid)
+        if (denial != null) return NpcActionResult.rejected(denial, NpcActionCode.PERMISSION_DENIED)
+        // A callback may trigger other server actions. Never insert a changed or now-unreachable stack
+        // on the strength of permission for its previous immutable observation.
+        val problem = pickupProblem(itemEntity)
+        if (problem != null) return problem
+        if (permission.candidates.none { it == candidate(itemEntity) }) {
+            return NpcActionResult.rejected("item changed during pickup permission check", NpcActionCode.NOT_READY)
         }
         val source = itemEntity.item
-        if (source.isEmpty) {
-            itemEntity.discard()
-            return NpcActionResult.rejected("item entity is empty")
-        }
+        val before = candidate(itemEntity)
+        val knowledge = NpcItemClassifier.profile(source)
         val remaining = source.copy()
         val pickedCount = insert(remaining)
         if (pickedCount == 0) {
@@ -46,6 +80,7 @@ internal class NpcInventoryActions(private val body: SamcnpcEntity) {
         if (remaining.isEmpty) {
             itemEntity.discard()
         }
+        MinecraftForge.EVENT_BUS.post(NpcItemPickupCompletedEvent(body.uuid, permission.dimensionId, before, pickedCount, knowledge))
         return NpcActionResult.succeeded("picked up $pickedCount ${body.itemId(source)}")
     }
 
@@ -182,19 +217,19 @@ internal class NpcInventoryActions(private val body: SamcnpcEntity) {
         }
         val nearby = body.level().getEntitiesOfClass(ItemEntity::class.java, body.boundingBox.inflate(PASSIVE_PICKUP_RADIUS))
             .asSequence()
-            .filter { item -> !item.hasPickUpDelay() && !item.item.isEmpty }
+            .filter { item -> !item.hasPickUpDelay() && !item.item.isEmpty && body.distanceToSqr(item) <= PICKUP_REACH_SQR }
             .sortedWith(compareBy<ItemEntity>({ body.distanceToSqr(it) }, { it.id }))
             .take(MAX_PASSIVE_PICKUPS_PER_TICK)
             .toList()
-        for (item in nearby) {
-            pickupItem(item.uuid)
-        }
+        if (nearby.isEmpty()) return
+        val permission = checkPickup(nearby)
+        for (item in nearby) pickupChecked(item, permission)
     }
 
     companion object {
         private const val PICKUP_REACH_SQR = 2.0 * 2.0
         private const val PASSIVE_PICKUP_RADIUS = 1.0
-        private const val MAX_PASSIVE_PICKUPS_PER_TICK = 8
+        private const val MAX_PASSIVE_PICKUPS_PER_TICK = NpcItemPickupCheckEvent.MAX_CANDIDATES
         private const val PICKUP_SOUND_VOLUME = 0.2F
         private const val PICKUP_SOUND_VARIATION = 0.7F
         private const val PICKUP_SOUND_BASE_PITCH = 1.0F

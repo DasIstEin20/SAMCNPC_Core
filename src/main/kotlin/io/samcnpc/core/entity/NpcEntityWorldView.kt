@@ -6,6 +6,7 @@ import io.samcnpc.core.api.NpcBlockContainerSlotObservation
 import io.samcnpc.core.api.NpcBlockObservation
 import io.samcnpc.core.api.NpcBlockPosition
 import io.samcnpc.core.api.NpcEntityObservation
+import io.samcnpc.core.api.NpcEntityTypeFilter
 import io.samcnpc.core.api.NpcEntityQuery
 import io.samcnpc.core.api.NpcPosition
 import io.samcnpc.core.api.NpcRaycastRequest
@@ -14,6 +15,9 @@ import io.samcnpc.core.api.NpcItemStackSnapshot
 import io.samcnpc.core.api.NpcItemClassifier
 import io.samcnpc.core.api.NpcVector
 import io.samcnpc.core.api.NpcWorldView
+import io.samcnpc.core.api.NpcBlockEnvironment
+import io.samcnpc.core.api.NpcPlantingSiteQuery
+import io.samcnpc.core.api.NpcPlantingSiteObservation
 import io.samcnpc.core.api.NpcStandingSpaceObservation
 import net.minecraft.core.BlockPos
 import net.minecraft.core.Direction
@@ -55,6 +59,46 @@ internal class NpcEntityWorldView(
         return (npc.level() as? ServerLevel)?.getEntity(uuid)?.takeIf(::isWithinObservationRange)?.let(::observe)
     }
 
+    override fun observeEntity(uuid: UUID, filter: NpcEntityTypeFilter): NpcEntityObservation? {
+        requireAvailable()
+        val target = (npc.level() as ServerLevel).getEntity(uuid) ?: return null
+        if (!isWithinObservationRange(target) || !filter.matches(target.type, entityTypeId(target))) return null
+        return observe(target)
+    }
+
+    override fun visibleFrom(feet: NpcPosition, target: UUID): Boolean? {
+        requireAvailable()
+        if (!feet.isFinite()) return null
+        val foot = Vec3(feet.x, feet.y, feet.z)
+        if (npc.position().distanceToSqr(foot) > 12.0 * 12.0) return null
+        val entity = (npc.level() as ServerLevel).getEntity(target) ?: return null
+        if (!isWithinObservationRange(entity)) return null
+        val start = foot.add(0.0, npc.eyeHeight.toDouble(), 0.0)
+        val end = entity.eyePosition
+        val blocks = LoadedNpcBlocks(npc.level() as ServerLevel)
+        val hit = blocks.clip(ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, npc))
+        if (blocks.unavailable) return null
+        return hit.type == HitResult.Type.MISS
+    }
+
+    override fun visibleBlockFrom(feet: NpcPosition, target: NpcBlockPosition): Boolean? {
+        requireAvailable()
+        if (!feet.isFinite()) return null
+        val foot = Vec3(feet.x,feet.y,feet.z)
+        if (npc.position().distanceToSqr(foot) > 12.0*12.0) return null
+        val position = BlockPos(target.x,target.y,target.z)
+        val start = foot.add(0.0,npc.eyeHeight.toDouble(),0.0)
+        val end = position.center
+        if (start.distanceToSqr(end) > 12.0*12.0 || !npc.level().hasChunkAt(position)) return null
+        val blocks = LoadedNpcBlocks(npc.level() as ServerLevel)
+        val state = blocks.getBlockState(position)
+        if (blocks.unavailable) return null
+        if (state.isAir) return false
+        val hit = blocks.clip(ClipContext(start,end,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,npc))
+        if (blocks.unavailable) return null
+        return hit.type == HitResult.Type.BLOCK && hit.blockPos == position
+    }
+
     override fun queryEntities(query: NpcEntityQuery): List<NpcEntityObservation> {
         requireAvailable()
         if (!query.radius.isFinite() || query.radius !in 0.0..NpcEntityQuery.MAX_RADIUS) {
@@ -74,7 +118,8 @@ internal class NpcEntityWorldView(
             (query.includeNpc || candidate.uuid != npc.uuid) &&
                 isWithinObservationRange(candidate) &&
                 isWithinRadius(candidate, center, query.radius) &&
-                (query.typeIds.isEmpty() || entityTypeId(candidate) in query.typeIds)
+                (query.typeIds.isEmpty() || entityTypeId(candidate) in query.typeIds) &&
+                (query.typeFilter?.matches(candidate.type, entityTypeId(candidate)) != false)
         }
         return entities.asSequence()
             .sortedWith(compareBy<Entity> { it.position().distanceToSqr(center) }.thenBy { it.uuid.toString() })
@@ -83,7 +128,11 @@ internal class NpcEntityWorldView(
             .toList()
     }
 
-    override fun observeBlock(position: NpcBlockPosition): NpcBlockObservation? {
+    override fun observeBlock(position: NpcBlockPosition): NpcBlockObservation? = blockObservation(position, false)
+
+    override fun observeBlockDetails(position: NpcBlockPosition): NpcBlockObservation? = blockObservation(position, true)
+
+    private fun blockObservation(position: NpcBlockPosition, details: Boolean): NpcBlockObservation? {
         requireAvailable()
         val blockPos = BlockPos(position.x, position.y, position.z)
         if (npc.distanceToSqr(blockPos.center) > MAX_BLOCK_OBSERVE_DISTANCE_SQR) {
@@ -94,14 +143,43 @@ internal class NpcEntityWorldView(
         val blocks = LoadedNpcBlocks(level)
         val state = blocks.getBlockState(blockPos)
         val solid = state.isSolidRender(blocks, blockPos)
+        val container = blocks.getBlockEntity(blockPos) is Container
+        val environment = if (details) {
+            val speed = state.getDestroySpeed(blocks, blockPos)
+            if (!speed.isFinite()) return null
+            val fluid = state.fluidState
+            val fluidId = if (fluid.isEmpty) null else ForgeRegistries.FLUIDS.getKey(fluid.type)?.toString() ?: return null
+            NpcBlockEnvironment(speed, fluidId, state.block is net.minecraft.world.level.block.FallingBlock,
+                state.canBeReplaced(), level.getMaxLocalRawBrightness(blockPos), NpcPlantObservations.growth(state))
+        } else null
         if (blocks.unavailable) return null
         return NpcBlockObservation(
             position = position,
             blockId = ForgeRegistries.BLOCKS.getKey(state.block)?.toString() ?: "minecraft:air",
             isAir = state.isAir,
             isSolid = solid,
-            hasContainer = blocks.getBlockEntity(blockPos) is Container,
+            hasContainer = container,
+            environment = environment,
         )
+    }
+
+    override fun observePlantingSite(query: NpcPlantingSiteQuery): NpcPlantingSiteObservation? {
+        requireAvailable()
+        if (query.inventorySlot !in 0 until SamcnpcEntity.INVENTORY_SIZE) return null
+        val position = BlockPos(query.position.x, query.position.y, query.position.z)
+        if (npc.distanceToSqr(position.center) > MAX_BLOCK_OBSERVE_DISTANCE_SQR) return null
+        val level = npc.level() as ServerLevel
+        if (level.isOutsideBuildHeight(position) || !level.hasChunksAt(position.offset(-1,-1,-1), position.offset(1,1,1))) return null
+        val stack = npc.menuInventoryStack(query.inventorySlot)
+        val item = stack.item as? net.minecraft.world.item.BlockItem ?: return null
+        if (stack.isEmpty || !NpcPlantObservations.supportsPlanting(item.block)) return null
+        val target = level.getBlockState(position)
+        val soil = level.getBlockState(position.below())
+        val plantId = ForgeRegistries.BLOCKS.getKey(item.block)?.toString() ?: return null
+        val soilId = ForgeRegistries.BLOCKS.getKey(soil.block)?.toString() ?: return null
+        return NpcPlantingSiteObservation(query.position, npc.itemId(stack), plantId, soilId,
+            target.isAir, !target.fluidState.isEmpty, item.block.defaultBlockState().canSurvive(level,position),
+            level.getMaxLocalRawBrightness(position))
     }
 
     override fun observeBlockContainer(position: NpcBlockPosition): NpcBlockContainerObservation? {
@@ -208,20 +286,12 @@ internal class NpcEntityWorldView(
         val healthFraction = if (living == null || living.maxHealth <= 0.0F) {
             null
         } else {
-            (living.health / living.maxHealth).toDouble().coerceIn(0.0, 1.0)
+            (living.health.toDouble() / living.maxHealth.toDouble()).coerceIn(0.0, 1.0)
         }
-        val itemStack = (entity as? ItemEntity)?.item
-            ?.takeIf { stack -> !stack.isEmpty }
-            ?.let { stack ->
-                val knowledge = NpcItemClassifier.profile(stack)
-                NpcItemStackSnapshot(
-                    itemId = knowledge.itemId,
-                    count = stack.count,
-                    maxStackSize = stack.maxStackSize,
-                    damage = stack.damageValue,
-                    maxDamage = stack.maxDamage,
-                )
-            }
+        val dropped = (entity as? ItemEntity)?.item?.takeUnless { it.isEmpty }
+        val knowledge = dropped?.let(NpcItemClassifier::profile)
+        val itemStack = if (dropped == null) null else NpcItemStackSnapshot(
+            knowledge?.itemId,dropped.count,dropped.maxStackSize,dropped.damageValue,dropped.maxDamage)
         return NpcEntityObservation(
             uuid = entity.uuid,
             typeId = entityTypeId(entity),
@@ -231,6 +301,7 @@ internal class NpcEntityWorldView(
             isPlayer = entity is net.minecraft.world.entity.player.Player,
             healthFraction = healthFraction,
             itemStack = itemStack,
+            itemKnowledge = knowledge,
             combat = living?.let { NpcCombatRules.facts(npc, it) },
         )
     }

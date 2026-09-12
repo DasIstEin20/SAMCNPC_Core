@@ -15,4 +15,14 @@ class NpcBlockBreakMathTest {
         assertEquals(0.015F, NpcBlockBreakMath.progressPerTick(6.0F, 4.0F, false))
         assertEquals(0.0F, NpcBlockBreakMath.progressPerTick(4.0F, -1.0F, true))
     }
+    @Test
+    fun `zero hardness completes one strike while invalid speeds remain inert`() {
+        assertEquals(1.0F, NpcBlockBreakMath.progressPerTick(1.0F, 0.0F, true))
+        assertEquals(1.0F, NpcBlockBreakMath.progressPerTick(1.0F, 0.0F, false))
+        assertEquals(0.0F, NpcBlockBreakMath.progressPerTick(0.0F, 0.0F, true))
+        assertEquals(0.0F, NpcBlockBreakMath.progressPerTick(Float.NaN, 0.0F, true))
+        assertEquals(0.0F, NpcBlockBreakMath.progressPerTick(1.0F, Float.NaN, true))
+        assertEquals(0.0F, NpcBlockBreakMath.progressPerTick(1.0F, Float.POSITIVE_INFINITY, true))
+    }
+
 }

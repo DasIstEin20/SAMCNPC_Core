@@ -259,7 +259,7 @@ wyłączenie i ponowne włączenie animacji (52 scenariusze). Klient zamyka się
 zakończeniu, a brak poprawnego wyniku powoduje błąd zadania Gradle. Kod tego testu nie trafia do JAR-a.
 `runClientConfigSmoke` sprawdza prawdziwy ekran Forge, potwierdzenia serwera, synchronizację
 postaci, niezależność dwóch zapisów i ponowne wczytanie. Używa katalogu `run-config-smoke/`.
-93 serwerowe GameTesty Core obejmuje m.in. podwójne skrzynki, wszystkie 33 efekty vanilli,
+103 serwerowe GameTesty Core obejmują m.in. podwójne skrzynki, wszystkie 33 efekty vanilli,
 pracę ręką, zużywanie narzędzi, wrogość mobów i rzeczywiste tickety chunków.
 Test chunków uruchamia dwa osobne procesy serwera i używa izolowanego zapisu `run-chunk-smoke`,
 sprawdzając generowanie terenu, zapis NPC/ekwipunku i automatyczne tickowanie po restarcie bez graczy.
@@ -269,6 +269,11 @@ serwera i sprawdza oczekujące postacie, zachowany ekwipunek oraz zmienione punk
 Zwykły serwer uruchamiany przez `runServer` wymaga zaakceptowania EULA Minecrafta przez użytkownika.
 
 ## Stan projektu
+
+Ta wersja zawiera 36 testów jednostkowych oraz mechaniczne obserwacje do pracy z plonami,
+żywnością, narzędziami i otoczeniem bloków. Nieaktywna historia NPC jest ograniczona do 4096
+wpisów. Zamknięcie serwera zwalnia usługę Core i uniemożliwia jej ponowne utworzenie po stopie.
+Test skórek na dwóch rzeczywiście zalogowanych kontach Minecraft pozostaje do wykonania.
 
 Wersja rozwojowa **0.1.0**. NPC jest dedykowaną encją, dlatego część funkcji i integracji
 wymagających bezpośrednio obiektu `Player` pozostaje nieobsługiwana. Dotyczy to m.in. części haków

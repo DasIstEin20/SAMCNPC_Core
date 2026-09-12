@@ -7,6 +7,7 @@ import io.samcnpc.core.api.NpcActionStatus
 import io.samcnpc.core.api.NpcMiningSpeed
 import io.samcnpc.core.config.NpcSetting
 import io.samcnpc.core.config.NpcSettingsConfig
+import net.minecraft.core.BlockPos
 import net.minecraft.tags.BlockTags
 import net.minecraft.tags.FluidTags
 import net.minecraft.world.item.ItemStack
@@ -21,11 +22,12 @@ internal object NpcMiningTools {
      * resource. Strict tool requirements remain the default; the two explicit configuration
      * exceptions permit ordinary hand mining without changing the caller's supplied target.
      */
-    fun prepare(body: SamcnpcEntity, state: BlockState): NpcActionResult? {
+    fun prepare(body: SamcnpcEntity, state: BlockState, position: BlockPos): NpcActionResult? {
         if (NpcSettingsConfig.enabled(NpcSetting.BARE_HANDS_ONLY)) return prepareEmptyHand(body)
         val selected = body.selectedInventorySlot()
         val requiresCorrect = state.requiresCorrectToolForDrops()
-        val requiresEffective = requiresEffectiveMiningTool(state)
+        val hardness = state.getDestroySpeed(body.level(), position)
+        val requiresEffective = requiresEffectiveMiningTool(state, hardness)
         val candidates = (0 until SamcnpcEntity.INVENTORY_SIZE).mapNotNull { slot ->
             val stack = body.menuInventoryStack(slot)
             if (stack.isEmpty) {
@@ -56,10 +58,10 @@ internal object NpcMiningTools {
             val failure = swapOrReject(body, chosen.slot, selected)
             if (failure != null) return failure
         }
-        return validate(state, body.mainHandItem)
+        return validate(state, body.mainHandItem, hardness)
     }
 
-    fun validate(state: BlockState, tool: ItemStack): NpcActionResult? {
+    fun validate(state: BlockState, tool: ItemStack, hardness: Float): NpcActionResult? {
         val bareHands = NpcSettingsConfig.enabled(NpcSetting.BARE_HANDS_ONLY)
         if (tool.isEmpty && (bareHands || NpcSettingsConfig.enabled(NpcSetting.IGNORE_MISSING_TOOL))) return null
         if (bareHands) return NpcActionResult.rejected("bare-hands block work requires an empty selected hand", NpcActionCode.UNSUITABLE_TOOL)
@@ -71,7 +73,7 @@ internal object NpcMiningTools {
                 NpcActionChannel.BLOCK_ACTION,
             )
         }
-        if (requiresEffectiveMiningTool(state) && (tool.isEmpty || tool.getDestroySpeed(state) <= NpcMiningToolSelector.HAND_DESTROY_SPEED)) {
+        if (requiresEffectiveMiningTool(state, hardness) && (tool.isEmpty || tool.getDestroySpeed(state) <= NpcMiningToolSelector.HAND_DESTROY_SPEED)) {
             return NpcActionResult.rejected(
                 "held item is not an effective mining tool for ${state.block.descriptionId}",
                 NpcActionCode.UNSUITABLE_TOOL,
@@ -81,7 +83,10 @@ internal object NpcMiningTools {
         return null
     }
 
-    private fun requiresEffectiveMiningTool(state: BlockState): Boolean {
+    private fun requiresEffectiveMiningTool(state: BlockState, hardness: Float): Boolean {
+        // Zero-hardness blocks break in one native strike, even if tagged as mineable.
+        // They cannot enter a slow hand-mining loop. Correct-tool drop rules still apply.
+        if (hardness == 0.0F && !state.requiresCorrectToolForDrops()) return false
         // Foliage is intentionally breakable with the currently held item. Vanilla may tag it as
         // hoe-mineable, but a player with an axe may still clear a sight line without first
         // obtaining a hoe. This remains a mechanical rule for the exact caller-supplied block;

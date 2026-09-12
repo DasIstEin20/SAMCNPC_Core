@@ -18,6 +18,9 @@ internal object NpcCombatRules {
                 (summoner != null && (summoner.isAlliedTo(target) || target.isAlliedTo(summoner))) ||
                 summonerTeam(body)?.isAlliedTo(target.team) == true,
             summonerUuid = (target as? SamcnpcEntity)?.summonerBinding()?.summonerUuid,
+            lastAttackerUuid = target.lastHurtByMob?.uuid,
+            lastAttackAgeTicks = target.lastHurtByMob?.let { (target.tickCount - target.lastHurtByMobTimestamp).toLong().coerceAtLeast(0) },
+            lastDamageSourceEntityUuid = target.lastDamageSource?.entity?.uuid,
         )
     }
 

@@ -16,7 +16,7 @@ object CoreNpcApi {
     }
 
     internal fun unregister(entity: SamcnpcEntity, server: MinecraftServer, state: NpcLifecycleState) {
-        NpcCoreRuntime.service(server).unregister(entity, state)
+        NpcCoreRuntime.existing(server)?.unregister(entity, state)
     }
 
     internal fun release(server: MinecraftServer) {

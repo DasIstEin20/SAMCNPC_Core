@@ -9,18 +9,18 @@ import java.util.UUID
  */
 class NpcDirectory internal constructor() {
     private val entities: MutableMap<UUID, SamcnpcEntity> = mutableMapOf()
-    private val lifecycle: MutableMap<UUID, NpcLifecycleSnapshot> = mutableMapOf()
+    private val lifecycle = NpcLifecycleIndex()
 
     internal fun register(entity: SamcnpcEntity) {
         val handle = handleOf(entity)
         entities[entity.uuid] = entity
-        lifecycle[entity.uuid] = NpcLifecycleSnapshot(handle, NpcLifecycleState.LOADED, entity.snapshot().dimensionId, entity.level().gameTime)
+        lifecycle.update(NpcLifecycleSnapshot(handle, NpcLifecycleState.LOADED, entity.snapshot().dimensionId, entity.level().gameTime))
     }
 
     internal fun unregister(entity: SamcnpcEntity, state: NpcLifecycleState) {
         val handle = handleOf(entity)
         entities.remove(entity.uuid, entity)
-        lifecycle[entity.uuid] = NpcLifecycleSnapshot(handle, state, entity.level().dimension().location().toString(), entity.level().gameTime)
+        lifecycle.update(NpcLifecycleSnapshot(handle, state, entity.level().dimension().location().toString(), entity.level().gameTime))
     }
 
     internal fun entity(npcUuid: UUID): SamcnpcEntity? = entities[npcUuid]?.takeUnless { it.isRemoved }
