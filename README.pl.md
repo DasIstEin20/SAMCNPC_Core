@@ -13,7 +13,7 @@ działaniami przez komendy lub API. Zapewnia ruch, animacje, ekwipunek, walkę o
 Decyzje o tym, co postać ma robić, należą do osobnego modułu Behavior lub innego dodatku.
 
 Po przywołaniu NPC pozostaje bezczynny, dopóki nie otrzyma polecenia. Może przy tym podnosić
-przedmioty, które znajdą się bezpośrednio przy jego ciele.
+przedmioty w ustawionym promieniu zbierania (domyślnie 2 bloki, z możliwością zwiększenia do 8).
 
 ## Możliwości
 
@@ -164,6 +164,7 @@ Kliknij **Zastosuj** przed zmianą zakładki lub zamknięciem; niezapisane zmian
 | Respawn | No |
 | Keep inventory (wymaga Respawn) | No |
 | Drop items after being killed | Yes |
+| Promień zbierania przedmiotów | 2 bloki |
 
 Default w obu zakładkach zachowuje wcześniejsze komendy animacji/chunków poszczególnych
 NPC i ustawienie hearts świata. Wymuszona wartość GUI blokuje odpowiednie komendy;
@@ -181,6 +182,43 @@ Ustawienia globalne są w `config/samcnpc-core-global.toml`, a świata w
 `<zapis>/serverconfig/samcnpc-core-world.toml`. Zmiany podczas gry potwierdza serwer;
 może je zapisać host świata lub operator. Lokalna konfiguracja klienta nie nadpisuje serwera
 multiplayer. Zmiany działają na obecne NPC bez ponownego uruchamiania świata.
+
+## Promień zbierania przedmiotów
+
+Otwórz **Mody → SAMCNPC Core → Config → Promień zbierania przedmiotów** i kliknij
+**Zastosuj** albo użyj komendy:
+
+```text
+/samcnpc pickupradius
+/samcnpc pickupradius 5
+/samcnpc pickupradius world 4.25
+/samcnpc pickupradius global 6
+/samcnpc pickupradius global default
+/samcnpc pickupradius world default
+```
+
+Pierwsza komenda pokazuje promień wynikowy, globalny i ustawienie świata. Sama liczba
+zmienia bieżący świat. Zakres wynosi 2–8 bloków; GUI zmienia wartość co pół bloku,
+a komenda przyjmuje również inne ułamki. Globalna liczba wymusza promień we wszystkich
+zapisach i blokuje wiersz świata. Globalne Default przekazuje decyzję światu; Default
+w obu miejscach oznacza 2 bloki. Zmiany wymagają hosta lub operatora i działają od razu.
+
+Zasięg jest kulą liczoną od stóp NPC i obejmuje zbieranie pasywne oraz jawną akcję pickup.
+Nie animuje przyciągania ani nie każe NPC chodzić za przedmiotami. Nadal obowiązują
+opóźnienie podnoszenia, miejsce w ekwipunku, veto zdarzeń i rezerwacje pracy Behavior.
+Zbieranie nie wybiera innego slotu hotbara ani nie zastępuje trzymanego przedmiotu nowym łupem.
+
+## Łowienie, maszyny i granice nawigacji
+
+Core obsługuje jeden fizyczny spławik na NPC, jawne zarzucanie/odnawianie/zwijanie/anulowanie,
+rzeczywisty loot wędkarski vanilli i zużycie wędki. Obie ręce są renderowane; stare ID akcji
+nie mogą wypłacić łupu ponownie. Wybór stawu i moment zwinięcia należą do Behavior.
+Haki innych modów wymagające Player nie są emulowane.
+
+Endpoint kontenera obejmuje wymiar, pozycję i opcjonalną stronę. Transfery ponownie
+sprawdzają kontener vanilli lub Forge item handler i zwracają liczbę przeniesionych sztuk.
+Interfejsy wymagające Player pozostają jawnie nieobsługiwane. Nawigacja może zawierać
+skończone granice sprawdzane dla ścieżki i fizycznej pozycji. [API Core](src/main/kotlin/io/samcnpc/core/api).
 
 ## Respawn, ekwipunek i punkt odradzania
 
@@ -259,7 +297,7 @@ wyłączenie i ponowne włączenie animacji (52 scenariusze). Klient zamyka się
 zakończeniu, a brak poprawnego wyniku powoduje błąd zadania Gradle. Kod tego testu nie trafia do JAR-a.
 `runClientConfigSmoke` sprawdza prawdziwy ekran Forge, potwierdzenia serwera, synchronizację
 postaci, niezależność dwóch zapisów i ponowne wczytanie. Używa katalogu `run-config-smoke/`.
-103 serwerowe GameTesty Core obejmują m.in. podwójne skrzynki, wszystkie 33 efekty vanilli,
+132 serwerowe GameTesty Core obejmują m.in. podwójne skrzynki, wszystkie 33 efekty vanilli,
 pracę ręką, zużywanie narzędzi, wrogość mobów i rzeczywiste tickety chunków.
 Test chunków uruchamia dwa osobne procesy serwera i używa izolowanego zapisu `run-chunk-smoke`,
 sprawdzając generowanie terenu, zapis NPC/ekwipunku i automatyczne tickowanie po restarcie bez graczy.
@@ -270,7 +308,7 @@ Zwykły serwer uruchamiany przez `runServer` wymaga zaakceptowania EULA Minecraf
 
 ## Stan projektu
 
-Ta wersja zawiera 36 testów jednostkowych oraz mechaniczne obserwacje do pracy z plonami,
+Ta wersja zawiera 45 testów jednostkowych oraz mechaniczne obserwacje do pracy z plonami,
 żywnością, narzędziami i otoczeniem bloków. Nieaktywna historia NPC jest ograniczona do 4096
 wpisów. Zamknięcie serwera zwalnia usługę Core i uniemożliwia jej ponowne utworzenie po stopie.
 Test skórek na dwóch rzeczywiście zalogowanych kontach Minecraft pozostaje do wykonania.

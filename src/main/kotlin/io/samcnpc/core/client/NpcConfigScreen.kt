@@ -1,5 +1,6 @@
 package io.samcnpc.core.client
 
+import io.samcnpc.core.config.NpcPickupRadius
 import io.samcnpc.core.config.NpcSetting
 import io.samcnpc.core.config.NpcSettingsConfig
 import io.samcnpc.core.config.NpcSettingsInbox
@@ -18,6 +19,8 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
     private var globalTab = true
     private var snapshot: NpcSettingsSnapshot? = null
     private var draft = mutableListOf<SettingChoice>()
+    private var draftRadius = NpcPickupRadius.DEFAULT
+    private val rowCount: Int get() = NpcSetting.entries.size + 1
     private var requested = false
     private var waiting = false
     private var message = ""
@@ -27,7 +30,7 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
     private val panelWidth: Int get() = minOf(430, width - 16)
     private val panelHeight: Int get() = minOf(296, height - 8)
     private val panelTop: Int get() = (height - panelHeight) / 2
-    private val visibleRows: Int get() = ((panelHeight - 111) / 18).coerceIn(1, NpcSetting.entries.size)
+    private val visibleRows: Int get() = ((panelHeight - 111) / 18).coerceIn(1, rowCount)
     private val footerY: Int get() = panelTop + panelHeight - 25
 
     override fun init() {
@@ -52,12 +55,16 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
         waiting = false
         message = if (!received.editable && received.message.isEmpty()) "samcnpc.config.denied" else received.message
         draft = (if (globalTab) received.global else received.world).toMutableList()
+        draftRadius = if (globalTab) received.globalPickupRadius else received.worldPickupRadius
         rebuild()
     }
 
     private fun selectTab(global: Boolean) {
         globalTab = global
-        snapshot?.let { draft = (if (global) it.global else it.world).toMutableList() }
+        snapshot?.let {
+            draft = (if (global) it.global else it.world).toMutableList()
+            draftRadius = if (global) it.globalPickupRadius else it.worldPickupRadius
+        }
         message = ""
         rebuild()
     }
@@ -72,7 +79,7 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
         worldTab.active = inWorld && globalTab && !waiting
         worldTab.tooltip = Tooltip.create(tr(if (inWorld) "world_hint" else "open_world"))
         val current = snapshot
-        scrollOffset = scrollOffset.coerceIn(0, NpcSetting.entries.size - visibleRows)
+        scrollOffset = scrollOffset.coerceIn(0, rowCount - visibleRows)
         val respawnIndex = NpcSetting.RESPAWN.ordinal
         val respawnAvailable = current != null && SettingChoice.resolve(
             (if (globalTab) draft else current.global).getOrElse(respawnIndex) { SettingChoice.DEFAULT },
@@ -95,8 +102,18 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
                 else -> Component.translatable("samcnpc.config.${setting.key}.hint")
             })
         }
+        val radiusLocked = !globalTab && current != null && current.globalPickupRadius != NpcPickupRadius.DEFAULT
+        val radiusLabel = if (radiusLocked) tr("forced", radiusLabel(checkNotNull(current).globalPickupRadius)) else radiusLabel(draftRadius)
+        val radiusButton = addRenderableWidget(Button.builder(radiusLabel) {
+            draftRadius = NpcPickupRadius.next(draftRadius)
+            rebuild()
+        }.bounds(left + panelWidth - 106, top + 72 + (NpcSetting.entries.size - scrollOffset) * 18, 106, 18).build())
+        radiusButton.visible = NpcSetting.entries.size in scrollOffset until scrollOffset + visibleRows
+        radiusButton.active = radiusButton.visible && current?.editable == true && !radiusLocked && !waiting
+        radiusButton.tooltip = Tooltip.create(tr(if (radiusLocked) "locked" else "pickupRadius.hint"))
         val apply = addRenderableWidget(Button.builder(tr("apply")) { apply() }.bounds(left, footerY, 90, 20).build())
-        apply.active = current?.editable == true && !waiting && draft != (if (globalTab) current.global else current.world)
+        apply.active = current?.editable == true && !waiting && (draft != (if (globalTab) current.global else current.world) ||
+            draftRadius != if (globalTab) current.globalPickupRadius else current.worldPickupRadius)
         addRenderableWidget(Button.builder(Component.translatable("gui.done")) { onClose() }.bounds(left + panelWidth - 90, footerY, 90, 20).build()).active = !waiting
     }
 
@@ -105,11 +122,11 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
         if (inWorld) {
             waiting = true
             message = "samcnpc.config.saving"
-            NpcSettingsNetwork.update(globalTab, draft.toList(), current.revision)
+            NpcSettingsNetwork.update(globalTab, draft.toList(), current.revision, draftRadius)
             rebuild()
         } else {
             try {
-                NpcSettingsConfig.update(true, draft)
+                NpcSettingsConfig.update(true, draft, draftRadius)
                 accept(NpcSettingsConfig.snapshot(true, "samcnpc.config.saved"))
             } catch (exception: RuntimeException) {
                 io.samcnpc.core.SamcnpcCore.LOGGER.error("Could not save local NPC settings", exception)
@@ -131,10 +148,14 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
             graphics.drawString(font, font.plainSubstrByWidth(label, panelWidth - 113), left + 3,
                 top + 77 + (setting.ordinal - scrollOffset) * 18, 0xE4E4E4)
         }
-        if (visibleRows < NpcSetting.entries.size) {
+        if (NpcSetting.entries.size in scrollOffset until scrollOffset + visibleRows) {
+            graphics.drawString(font, font.plainSubstrByWidth(tr("pickupRadius").string, panelWidth - 113), left + 3,
+                top + 77 + (NpcSetting.entries.size - scrollOffset) * 18, 0xE4E4E4)
+        }
+        if (visibleRows < rowCount) {
             val track = visibleRows * 18
-            val thumb = maxOf(12, track * visibleRows / NpcSetting.entries.size)
-            val y = top + 72 + (track - thumb) * scrollOffset / (NpcSetting.entries.size - visibleRows)
+            val thumb = maxOf(12, track * visibleRows / rowCount)
+            val y = top + 72 + (track - thumb) * scrollOffset / (rowCount - visibleRows)
             graphics.fill(left + panelWidth + 2, top + 72, left + panelWidth + 5, top + 72 + track, 0xFF505050.toInt())
             graphics.fill(left + panelWidth + 2, y, left + panelWidth + 5, y + thumb, 0xFFB8B8B8.toInt())
         }
@@ -145,7 +166,7 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
     override fun mouseScrolled(mouseX: Double, mouseY: Double, delta: Double): Boolean {
         if (mouseX in panelLeft.toDouble()..(panelLeft + panelWidth + 6).toDouble() &&
             mouseY >= panelTop + 68 && mouseY < footerY - 12 && delta != 0.0) {
-            scrollOffset = (scrollOffset + if (delta > 0.0) -1 else 1).coerceIn(0, NpcSetting.entries.size - visibleRows)
+            scrollOffset = (scrollOffset + if (delta > 0.0) -1 else 1).coerceIn(0, rowCount - visibleRows)
             rebuild()
             return true
         }
@@ -156,6 +177,8 @@ internal class NpcConfigScreen(private val parent: Screen) : Screen(Component.li
     override fun onClose() { minecraft?.setScreen(parent) }
 
     private fun tr(key: String, vararg args: Any): Component = Component.translatable("samcnpc.config.$key", *args)
+    private fun radiusLabel(value: Double): Component = if (value == NpcPickupRadius.DEFAULT) tr("default") else
+        tr("radius_blocks", String.format(java.util.Locale.ROOT, "%.2f", value).trimEnd('0').trimEnd('.'))
     private fun choiceLabel(choice: SettingChoice): Component = tr(choice.name.lowercase(java.util.Locale.ROOT))
 
     companion object {

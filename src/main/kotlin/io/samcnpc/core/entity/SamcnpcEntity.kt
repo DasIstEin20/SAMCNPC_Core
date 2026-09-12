@@ -1,5 +1,9 @@
 package io.samcnpc.core.entity
 
+import io.samcnpc.core.api.NpcContainerEndpoint
+import io.samcnpc.core.api.NpcContainerTransferRequest
+import io.samcnpc.core.api.NpcContainerTransferResult
+import io.samcnpc.core.api.NpcContainerTransferState
 import io.samcnpc.core.api.NpcActionResult
 import io.samcnpc.core.api.NpcActionCompletion
 import io.samcnpc.core.api.NpcControlState
@@ -15,6 +19,9 @@ import io.samcnpc.core.api.NpcBlockFace
 import io.samcnpc.core.api.NpcBlockPlacement
 import io.samcnpc.core.api.NpcBlockContainerSlot
 import io.samcnpc.core.api.NpcControlInput
+import io.samcnpc.core.api.NpcFishingCast
+import io.samcnpc.core.api.NpcFishingState
+import io.samcnpc.core.api.NpcFishingReelResult
 import io.samcnpc.core.api.NpcFacade
 import io.samcnpc.core.api.NpcEquipmentDestination
 import io.samcnpc.core.api.NpcEquipmentSnapshot
@@ -121,6 +128,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         private set
     private val inventoryActions = NpcInventoryActions(this)
     private val blockBreakController = NpcBlockBreakController(this, ::completeAction)
+    private val fishingController = NpcFishingController(this, ::completeAction)
     private val rangedController = NpcRangedAttackController(this, ::completeAction)
     private val navigationController = NpcNavigationController(this, ::completeAction)
     private val itemUseController = NpcItemUseController(this, ::completeAction)
@@ -140,7 +148,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         // Core intentionally installs no autonomous goals. Behavior invokes explicit primitives.
     }
 
-    override fun createNavigation(level: Level): PathNavigation = super.createNavigation(level)
+    override fun createNavigation(level: Level): PathNavigation = NpcGroundNavigation(this, level)
 
     override fun defineSynchedData() {
         super.defineSynchedData()
@@ -170,6 +178,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             if (isAlive) {
                 if (NpcSettingsConfig.enabled(NpcSetting.IMMORTAL)) health = maxHealth
                 itemUseController.beforeTick()
+                navigationController.beforeTick()
                 expireControlIfNeeded()
                 applyControlInput()
             } else {
@@ -186,6 +195,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             }
             navigationController.tick()
             inventoryActions.tickPassivePickup()
+            fishingController.tick()
             rangedController.tick()
             itemUseController.afterTick()
             blockBreakController.tick()
@@ -239,6 +249,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         super.onRemovedFromWorld()
         val server = (level() as? ServerLevel)?.server ?: return
         // Forge invokes this for tracking/unload paths that bypass Entity.remove().
+        fishingController.cancel("fishing body left the loaded world", removal = true)
         NpcActivityEvents.existing(server)?.leftWorld(this)
     }
 
@@ -428,6 +439,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             itemUse = itemUseState(),
             blockBreak = blockBreakController.snapshot(),
             rangedAttack = rangedController.snapshot(),
+            fishing = fishingController.state(),
             equipment = equipmentKnowledge(),
             selectedHotbarSlot = selectedHotbarSlot,
             ignoreMissingMiningTool = NpcSettingsConfig.enabled(NpcSetting.IGNORE_MISSING_TOOL),
@@ -685,6 +697,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun attackEntity(entityUuid: UUID): NpcActionResult {
+        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
         if (rangedController.isActive || blockBreakController.isActive || isUsingItem) {
             return NpcActionResult.rejected("finish the active hand action before performing melee", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
         }
@@ -760,6 +773,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun startRangedAttack(entityUuid: UUID, hand: NpcHand): NpcActionResult {
+        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
         if (blockBreakController.isActive || itemUseController.actionId != null) {
             return NpcActionResult.rejected("cancel the conflicting block or held action before ranged use", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
         }
@@ -777,6 +791,14 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
 
     override fun moveBlockContainerToInventory(source: NpcBlockContainerSlot, count: Int): NpcActionResult =
         inventoryActions.moveBlockContainerToInventory(source, count)
+
+    override fun transferToContainer(inventorySlot: Int, request: NpcContainerTransferRequest): NpcContainerTransferResult =
+        inventoryActions.containerTransfers.insert(inventorySlot, request)
+
+    override fun transferFromContainer(request: NpcContainerTransferRequest): NpcContainerTransferResult =
+        inventoryActions.containerTransfers.extract(request)
+
+    override fun containerTransferState(): NpcContainerTransferState? = inventoryActions.containerTransfers.journal.state
 
     override fun moveInventoryStack(sourceSlot: Int, destinationSlot: Int, count: Int): NpcActionResult {
         if (sourceSlot !in inventory.indices || destinationSlot !in inventory.indices) {
@@ -828,6 +850,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun startBlockBreak(position: NpcBlockPosition): NpcActionResult {
+        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
         if (rangedController.isActive || isUsingItem) {
             return NpcActionResult.rejected("cancel the conflicting ranged or item use before breaking a block", NpcActionCode.CONFLICT, NpcActionChannel.BLOCK_ACTION)
         }
@@ -844,6 +867,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * are reported as unsupported instead of passing a counterfeit player to mod code.
      */
     override fun useItemInAir(hand: NpcHand): NpcActionResult {
+        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
         if (rangedController.isActive) {
             return NpcActionResult.rejected("cancel the ranged attack before using another item", NpcActionCode.CONFLICT, hand.actionChannel())
         }
@@ -880,6 +904,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * rejected explicitly rather than impersonating a ServerPlayer.
      */
     override fun useItemOnBlock(hit: NpcBlockHit, hand: NpcHand): NpcActionResult {
+        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
         if (rangedController.isActive) {
             return NpcActionResult.rejected("cancel the ranged attack before using an item on a block", NpcActionCode.CONFLICT, NpcActionChannel.INTERACTION)
         }
@@ -934,6 +959,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * the unsupported boundary explicit until Forge offers an entity-safe hook.
      */
     override fun interactEntity(hit: NpcEntityHit, hand: NpcHand): NpcActionResult {
+        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
         val target = resolveEntity(hit.entityUuid)
             ?: return NpcActionResult.rejected("entity is unavailable in this dimension", NpcActionCode.NOT_FOUND, NpcActionChannel.INTERACTION)
         if (target.uuid == uuid || target.isRemoved) {
@@ -966,6 +992,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * waterlogging, multi-block state and its own modded placement behavior.
      */
     override fun placeHeldBlock(placement: NpcBlockPlacement, hand: NpcHand): NpcActionResult {
+        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
         val target = BlockPos(placement.position.x, placement.position.y, placement.position.z)
         // Bound reads here; useItemOnBlock still validates the actual support hit at normal reach.
         if (distanceToSqr(target.center) > PLACEMENT_PREFLIGHT_REACH_SQR) {
@@ -1005,6 +1032,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun useInteractiveBlock(position: NpcBlockPosition): NpcActionResult {
+        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
         val blockPos = BlockPos(position.x, position.y, position.z)
         if (distanceToSqr(blockPos.center) > BLOCK_INTERACTION_REACH_SQR) {
             return NpcActionResult.rejected("block is out of interaction reach")
@@ -1027,7 +1055,20 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         return NpcActionResult.succeeded("used ${state.block.descriptionId}")
     }
 
+    internal fun hasFishingHook(id: UUID): Boolean = fishingController.hasHook(id)
+    override fun fishingState(): NpcFishingState? = fishingController.state()
+    override fun castFishing(request: NpcFishingCast): NpcActionResult {
+        if (rangedController.isActive || blockBreakController.isActive || isUsingItem) {
+            return NpcActionResult.rejected("cancel conflicting hand actions before fishing", NpcActionCode.CONFLICT)
+        }
+        return fishingController.start(request)
+    }
+    override fun continueFishing(actionId: UUID): NpcActionResult = fishingController.renew(actionId)
+    override fun reelFishing(actionId: UUID): NpcFishingReelResult = fishingController.reel(actionId)
+    override fun cancelFishing(): NpcActionResult = fishingController.cancel()
+
     override fun startItemUse(hand: NpcHand): NpcActionResult {
+        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
         if (rangedController.isActive || blockBreakController.isActive) {
             return NpcActionResult.rejected("cancel the conflicting ranged or block action before using an item", NpcActionCode.CONFLICT, hand.actionChannel())
         }
@@ -1140,6 +1181,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             completeAction(NpcActionResult.failed(detail, NpcActionCode.CANCELLED, controlId, NpcActionChannel.LOCOMOTION))
         }
         rangedController.cancel(detail)
+        fishingController.cancel(detail, removal = true)
         itemUseController.cancel(detail)
         blockBreakController.cancel(detail)
     }
@@ -1405,6 +1447,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         tag.put(KEY_AMMUNITION, ammunition.save(CompoundTag()))
         tag.put(KEY_TOTEM, totem.save(CompoundTag()))
         tag.putInt(KEY_SELECTED_SLOT, selectedHotbarSlot)
+        inventoryActions.containerTransfers.journal.write(tag)
     }
 
     override fun readAdditionalSaveData(tag: CompoundTag) {
@@ -1442,6 +1485,10 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
             null
         }
         ContainerHelper.loadAllItems(tag, inventory)
+        // v1-v4 have no transfer journal. v5 unresolved effects remain fenced after load.
+        inventoryActions.containerTransfers.journal.read(tag,
+            NpcContainerEndpoint(level().dimension().location().toString(), NpcBlockPosition(blockX, blockY, blockZ)))
+
         ammunition = loadOptionalStack(tag, KEY_AMMUNITION)
         val persistedTotem = loadOptionalStack(tag, KEY_TOTEM)
         totem = persistedTotem.copyWithCount(persistedTotem.count.coerceAtMost(TOTEM_RESERVE_CAPACITY))
@@ -1458,7 +1505,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     companion object {
-        private const val DATA_VERSION = 4
+        internal const val DATA_VERSION = 5
         private const val KEY_DATA_VERSION = "samcnpcDataVersion"
         private const val KEY_SUMMONER = "summoner"
         private const val KEY_SKIN = "skin"
@@ -1487,7 +1534,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         private const val THROWN_POTION_INACCURACY = 1.0F
         private const val BLOCK_PLACE_REACH_SQR = 4.5 * 4.5
         private const val PLACEMENT_PREFLIGHT_REACH_SQR = 7.0 * 7.0
-        private const val BLOCK_INTERACTION_REACH_SQR = 4.5 * 4.5
+        internal const val BLOCK_INTERACTION_REACH_SQR = 4.5 * 4.5
         private const val ENTITY_INTERACTION_REACH_SQR = 4.5 * 4.5
         private const val ENTITY_HIT_TOLERANCE = 0.25
         private const val MAX_HIT_OFFSET_SQR = 1.5 * 1.5

@@ -37,5 +37,9 @@
   "samcnpc.config.keepInventory.hint": "Wymaga odradzania. Zachowuje ekwipunek, pancerz, drugą rękę, amunicję i totem. Zachowane przedmioty nie wypadają po śmierci. Domyślnie: No.",
   "samcnpc.config.dropItemsAfterDeath": "Wyrzucaj przedmioty po śmierci",
   "samcnpc.config.dropItemsAfterDeath.hint": "Wyrzuć wszystkie przedmioty po śmierci, jeśli nie zachowuje ich Keep inventory. No usuwa niezachowywane przedmioty. Jawne odwołanie NPC nadal wyrzuca ekwipunek. Domyślnie: Yes.",
-  "samcnpc.config.requires_respawn": "Włącz odradzanie, aby włączyć zachowywanie ekwipunku."
+  "samcnpc.config.requires_respawn": "Włącz odradzanie, aby włączyć zachowywanie ekwipunku.",
+  "samcnpc.config.pickupRadius": "Promień zbierania przedmiotów",
+  "samcnpc.config.pickupRadius.hint": "Odległość w blokach: 2–8. Klikaj, aby zmieniać co 0,5; DOMYŚLNIE dziedziczy ustawienie (standardowo: 2). Działa od razu dla wszystkich NPC. Respektuje rezerwacje i pojemność ekwipunku.",
+  "samcnpc.config.radius_blocks": "%s bl.",
+  "samcnpc.config.invalid_radius": "Promień zbierania musi wynosić 2–8 bloków lub DOMYŚLNIE."
 }

@@ -8,12 +8,15 @@ data class NpcNavigationRequest(
     val speedMultiplier: Float = 1.0F,
     val arrivalDistance: Double = DEFAULT_ARRIVAL_DISTANCE,
     val leaseTicks: Int = DEFAULT_LEASE_TICKS,
+    val bounds: NpcNavigationBounds? = null,
 ) {
     fun validationProblem(): String? = when {
         !position.x.isFinite() || !position.y.isFinite() || !position.z.isFinite() -> "navigation position must be finite"
         !speedMultiplier.isFinite() || speedMultiplier !in 0.1F..1.5F -> "navigation speed must be in [0.1, 1.5]"
         !arrivalDistance.isFinite() || arrivalDistance !in 0.25..2.0 -> "navigation arrival distance must be in [0.25, 2.0]"
         leaseTicks !in 1..DEFAULT_LEASE_TICKS -> "navigation lease must be in [1, $DEFAULT_LEASE_TICKS] ticks"
+        bounds?.validationProblem() != null -> bounds.validationProblem()
+        bounds != null && !bounds.contains(position) -> "navigation destination is outside supplied bounds"
         else -> null
     }
 

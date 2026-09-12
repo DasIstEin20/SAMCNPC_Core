@@ -24,6 +24,8 @@ interface NpcWorldView {
     /** Null for unavailable cells or unsupported plant items; never forces a chunk load. */
     fun observePlantingSite(query: NpcPlantingSiteQuery): NpcPlantingSiteObservation? = null
     fun observeBlockContainer(position: NpcBlockPosition): NpcBlockContainerObservation?
+    /** Null means unavailable/unsupported; capabilities and their side-specific slots remain private to Core. */
+    fun observeContainer(endpoint: NpcContainerEndpoint): NpcContainerObservation? = null
     /** Actual standing hull clearance, solid foot contact and fluid presence; null means unavailable. */
     fun observeStandingSpace(feet: NpcPosition): NpcStandingSpaceObservation? = null
     fun raycast(request: NpcRaycastRequest): NpcRaycastResult

@@ -10,6 +10,12 @@ import net.minecraftforge.registries.RegistryObject
 object ModEntities {
     val REGISTRY: DeferredRegister<EntityType<*>> = DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, SamcnpcCore.MOD_ID)
 
+    val NPC_FISHING_HOOK: RegistryObject<EntityType<NpcFishingHookEntity>> = REGISTRY.register("npc_fishing_hook") {
+        EntityType.Builder.of(::NpcFishingHookEntity, MobCategory.MISC)
+            .sized(0.25F, 0.25F).noSave().noSummon().clientTrackingRange(8).updateInterval(2)
+            .build("${SamcnpcCore.MOD_ID}:npc_fishing_hook")
+    }
+
     val NPC_TRIDENT: RegistryObject<EntityType<NpcThrownTridentEntity>> = REGISTRY.register("npc_trident") {
         EntityType.Builder.of(::NpcThrownTridentEntity, MobCategory.MISC)
             .sized(0.5F, 0.5F)

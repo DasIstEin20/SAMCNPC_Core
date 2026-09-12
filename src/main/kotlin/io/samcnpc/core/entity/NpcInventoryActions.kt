@@ -9,6 +9,7 @@ import io.samcnpc.core.api.NpcItemPickupCompletedEvent
 import io.samcnpc.core.api.NpcItemPickupCheckEvent
 import io.samcnpc.core.api.NpcPickupCandidate
 import io.samcnpc.core.api.NpcPosition
+import io.samcnpc.core.config.NpcSettingsConfig
 import net.minecraftforge.common.MinecraftForge
 import net.minecraft.sounds.SoundEvents
 import net.minecraft.sounds.SoundSource
@@ -18,6 +19,7 @@ import java.util.UUID
 
 /** Bounded transfers operate on the body's real stores; this helper has no inventory of its own. */
 internal class NpcInventoryActions(private val body: SamcnpcEntity) {
+    val containerTransfers = NpcContainerTransfers(body, ::insert)
     fun pickupItem(itemEntityUuid: UUID): NpcActionResult {
         val itemEntity = body.resolveEntity(itemEntityUuid) as? ItemEntity
             ?: return NpcActionResult.rejected("item entity is unavailable in this dimension")
@@ -31,7 +33,8 @@ internal class NpcInventoryActions(private val body: SamcnpcEntity) {
             return NpcActionResult.rejected("pickup body or item entity is unavailable", NpcActionCode.NOT_READY)
         }
         if (itemEntity.hasPickUpDelay()) return NpcActionResult.rejected("item entity cannot be picked up yet")
-        if (body.distanceToSqr(itemEntity) > PICKUP_REACH_SQR) return NpcActionResult.rejected("item entity is out of pickup reach")
+        val radius = NpcSettingsConfig.pickupRadius()
+        if (body.distanceToSqr(itemEntity) > radius * radius) return NpcActionResult.rejected("item entity is out of pickup reach")
         if (itemEntity.item.isEmpty) return NpcActionResult.rejected("item entity is empty")
         return null
     }
@@ -109,65 +112,11 @@ internal class NpcInventoryActions(private val body: SamcnpcEntity) {
         return NpcActionResult.succeeded("dropped $dropCount ${body.itemId(dropped)} from inventory slot $slot")
     }
 
-    fun moveInventoryToBlockContainer(inventorySlot: Int, destination: NpcBlockContainerSlot, count: Int): NpcActionResult {
-        if (inventorySlot !in 0 until SamcnpcEntity.INVENTORY_SIZE) {
-            return NpcActionResult.rejected("inventory slot must be between 0 and ${SamcnpcEntity.INVENTORY_SIZE - 1}")
-        }
-        if (count <= 0) {
-            return NpcActionResult.rejected("transfer count must be positive")
-        }
-        val source = body.menuInventoryStack(inventorySlot)
-        if (source.isEmpty) {
-            return NpcActionResult.rejected("inventory slot $inventorySlot is empty")
-        }
-        val container = body.resolveBlockContainer(destination.position) ?: return NpcActionResult.rejected("no usable block container at supplied position")
-        if (destination.slot !in 0 until container.containerSize) {
-            return NpcActionResult.rejected("container slot is out of bounds")
-        }
-        if (!container.canPlaceItem(destination.slot, source)) {
-            return NpcActionResult.rejected("container rejected this item")
-        }
-        val target = container.getItem(destination.slot)
-        if (!target.isEmpty && !ItemStack.isSameItemSameTags(source, target)) {
-            return NpcActionResult.rejected("container slot holds a different item")
-        }
-        val capacity = if (target.isEmpty) minOf(container.maxStackSize, source.maxStackSize) else minOf(container.maxStackSize, target.maxStackSize) - target.count
-        val transfer = minOf(count, source.count, capacity)
-        if (transfer <= 0) {
-            return NpcActionResult.rejected("container slot has no free capacity")
-        }
-        val placed = if (target.isEmpty) source.copy() else target.copy()
-        placed.count = if (target.isEmpty) transfer else target.count + transfer
-        container.setItem(destination.slot, placed)
-        container.setChanged()
-        source.shrink(transfer)
-        body.setMenuInventoryStack(inventorySlot, source)
-        return NpcActionResult.succeeded("moved $transfer ${body.itemId(placed)} to block container")
-    }
+    fun moveInventoryToBlockContainer(inventorySlot: Int, destination: NpcBlockContainerSlot, count: Int): NpcActionResult =
+        containerTransfers.legacyInsert(inventorySlot, destination, count)
 
-    fun moveBlockContainerToInventory(source: NpcBlockContainerSlot, count: Int): NpcActionResult {
-        if (count <= 0) {
-            return NpcActionResult.rejected("transfer count must be positive")
-        }
-        val container = body.resolveBlockContainer(source.position) ?: return NpcActionResult.rejected("no usable block container at supplied position")
-        if (source.slot !in 0 until container.containerSize) {
-            return NpcActionResult.rejected("container slot is out of bounds")
-        }
-        val stack = container.getItem(source.slot)
-        if (stack.isEmpty) {
-            return NpcActionResult.rejected("container slot is empty")
-        }
-        val proposed = stack.copy()
-        proposed.count = minOf(count, stack.count)
-        val accepted = insert(proposed)
-        if (accepted <= 0) {
-            return NpcActionResult.rejected("NPC inventory has no room for ${body.itemId(stack)}")
-        }
-        stack.shrink(accepted)
-        container.setItem(source.slot, stack)
-        container.setChanged()
-        return NpcActionResult.succeeded("moved $accepted ${body.itemId(proposed)} from block container")
-    }
+    fun moveBlockContainerToInventory(source: NpcBlockContainerSlot, count: Int): NpcActionResult =
+        containerTransfers.legacyExtract(source, count)
 
     fun insert(remaining: ItemStack): Int {
         val initialCount = remaining.count
@@ -208,16 +157,17 @@ internal class NpcInventoryActions(private val body: SamcnpcEntity) {
 
     /**
      * Player inventory pickup is a contact mechanic, not a goal. Core never walks toward loot and
-     * never equips it, but an ItemEntity entering the normal personal pickup envelope is inserted
+     * never equips it, but an ItemEntity entering the configured personal pickup envelope is inserted
      * into the authoritative 36-slot inventory just as it would be for a nearby player.
      */
     fun tickPassivePickup() {
         if (!body.isAlive) {
             return
         }
-        val nearby = body.level().getEntitiesOfClass(ItemEntity::class.java, body.boundingBox.inflate(PASSIVE_PICKUP_RADIUS))
+        val radius = NpcSettingsConfig.pickupRadius()
+        val nearby = body.level().getEntitiesOfClass(ItemEntity::class.java, body.boundingBox.inflate(radius))
             .asSequence()
-            .filter { item -> !item.hasPickUpDelay() && !item.item.isEmpty && body.distanceToSqr(item) <= PICKUP_REACH_SQR }
+            .filter { item -> !item.hasPickUpDelay() && !item.item.isEmpty && body.distanceToSqr(item) <= radius * radius }
             .sortedWith(compareBy<ItemEntity>({ body.distanceToSqr(it) }, { it.id }))
             .take(MAX_PASSIVE_PICKUPS_PER_TICK)
             .toList()
@@ -227,8 +177,6 @@ internal class NpcInventoryActions(private val body: SamcnpcEntity) {
     }
 
     companion object {
-        private const val PICKUP_REACH_SQR = 2.0 * 2.0
-        private const val PASSIVE_PICKUP_RADIUS = 1.0
         private const val MAX_PASSIVE_PICKUPS_PER_TICK = NpcItemPickupCheckEvent.MAX_CANDIDATES
         private const val PICKUP_SOUND_VOLUME = 0.2F
         private const val PICKUP_SOUND_VARIATION = 0.7F

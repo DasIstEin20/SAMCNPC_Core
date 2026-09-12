@@ -132,7 +132,7 @@ object NpcRespawnGameTests {
         legacy.load(legacyTag)
         check(legacy.summonPoint == future.summonPoint && legacy.lifeId != future.lifeId)
         check(legacy.summonerBinding() == future.summonerBinding() && legacy.skinBinding() == future.skinBinding())
-        check(legacy.saveWithoutId(CompoundTag()).getInt("samcnpcDataVersion") == 4)
+        check(legacy.saveWithoutId(CompoundTag()).getInt("samcnpcDataVersion") == 5)
         check(command("${first.uuid} 0 9999 0") == 0 && first.summonPoint == initial)
         // The existing durable index survives an unloaded body; this override applies on its next join.
         val savedSecond = second.saveWithoutId(CompoundTag())

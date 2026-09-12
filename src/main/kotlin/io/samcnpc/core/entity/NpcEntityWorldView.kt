@@ -1,5 +1,7 @@
 package io.samcnpc.core.entity
 
+import io.samcnpc.core.api.NpcContainerEndpoint
+import io.samcnpc.core.api.NpcContainerObservation
 import io.samcnpc.core.api.NpcBlockFace
 import io.samcnpc.core.api.NpcBlockContainerObservation
 import io.samcnpc.core.api.NpcBlockContainerSlotObservation
@@ -180,6 +182,15 @@ internal class NpcEntityWorldView(
         return NpcPlantingSiteObservation(query.position, npc.itemId(stack), plantId, soilId,
             target.isAir, !target.fluidState.isEmpty, item.block.defaultBlockState().canSurvive(level,position),
             level.getMaxLocalRawBrightness(position))
+    }
+
+    override fun observeContainer(endpoint: NpcContainerEndpoint): NpcContainerObservation? {
+        requireAvailable()
+        if (endpoint.dimensionId != dimensionId) return null
+        val point = endpoint.position
+        val position = BlockPos(point.x, point.y, point.z)
+        if (npc.distanceToSqr(position.center) > MAX_BLOCK_OBSERVE_DISTANCE_SQR) return null
+        return NpcContainerEndpoints.observe(npc.level(), endpoint)
     }
 
     override fun observeBlockContainer(position: NpcBlockPosition): NpcBlockContainerObservation? {

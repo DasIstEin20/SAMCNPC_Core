@@ -33,8 +33,11 @@ internal data class NpcSettingsSnapshot(
     val revision: Long,
     val editable: Boolean,
     val message: String = "",
+    val globalPickupRadius: Double = NpcPickupRadius.DEFAULT,
+    val worldPickupRadius: Double = NpcPickupRadius.DEFAULT,
 ) {
     init {
+        require(NpcPickupRadius.valid(globalPickupRadius) && NpcPickupRadius.valid(worldPickupRadius))
         require(global.size == NpcSetting.entries.size && world.size == NpcSetting.entries.size)
     }
 }

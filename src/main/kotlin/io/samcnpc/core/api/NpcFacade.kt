@@ -32,7 +32,7 @@ interface NpcFacade {
         val problem = request.validationProblem()
         if (problem != null) return NpcActionResult.rejected(problem, NpcActionCode.INVALID_REQUEST, NpcActionChannel.LOCOMOTION)
         if (request.arrivalDistance != NpcNavigationRequest.DEFAULT_ARRIVAL_DISTANCE ||
-            request.leaseTicks != NpcNavigationRequest.DEFAULT_LEASE_TICKS) {
+            request.leaseTicks != NpcNavigationRequest.DEFAULT_LEASE_TICKS || request.bounds != null) {
             return NpcActionResult.unsupported("facade does not implement explicit navigation limits", NpcActionChannel.LOCOMOTION)
         }
         return navigateTo(request.position, request.speedMultiplier)
@@ -57,6 +57,15 @@ interface NpcFacade {
     fun useInteractiveBlock(position: NpcBlockPosition): NpcActionResult
     fun moveInventoryToBlockContainer(inventorySlot: Int, destination: NpcBlockContainerSlot, count: Int): NpcActionResult
     fun moveBlockContainerToInventory(source: NpcBlockContainerSlot, count: Int): NpcActionResult
+    /** Existing third-party facades explicitly lack this extension until they implement it. */
+    fun transferToContainer(inventorySlot: Int, request: NpcContainerTransferRequest): NpcContainerTransferResult = NpcContainerTransferResult.unsupported()
+    fun transferFromContainer(request: NpcContainerTransferRequest): NpcContainerTransferResult = NpcContainerTransferResult.unsupported()
+    fun containerTransferState(): NpcContainerTransferState? = null
+    fun fishingState(): NpcFishingState? = null
+    fun castFishing(request: NpcFishingCast): NpcActionResult = NpcActionResult.unsupported("facade does not implement fishing")
+    fun continueFishing(actionId: UUID): NpcActionResult = NpcActionResult.unsupported("facade does not implement fishing")
+    fun reelFishing(actionId: UUID): NpcFishingReelResult = NpcFishingReelResult(NpcActionResult.unsupported("facade does not implement fishing"), false)
+    fun cancelFishing(): NpcActionResult = NpcActionResult.unsupported("facade does not implement fishing")
     fun startItemUse(hand: NpcHand): NpcActionResult
     fun continueItemUse(): NpcActionResult
     fun releaseItemUse(): NpcActionResult

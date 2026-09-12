@@ -37,5 +37,9 @@
   "samcnpc.config.keepInventory.hint": "Requires Respawn. Preserve inventory, armor, offhand, ammunition and totem on respawn. Kept items never also drop. Built-in: No.",
   "samcnpc.config.dropItemsAfterDeath": "Drop items after being killed",
   "samcnpc.config.dropItemsAfterDeath.hint": "Drop all carried items on death unless Keep inventory retains them. No deletes items when they are not kept. Explicit dismissal still drops its inventory. Built-in: Yes.",
-  "samcnpc.config.requires_respawn": "Enable Respawn before enabling Keep inventory."
+  "samcnpc.config.requires_respawn": "Enable Respawn before enabling Keep inventory.",
+  "samcnpc.config.pickupRadius": "Item pickup radius",
+  "samcnpc.config.pickupRadius.hint": "Distance in blocks, 2–8. Click to cycle by 0.5; DEFAULT inherits (built-in: 2). Applies immediately to all NPCs. Reservations and inventory capacity still apply.",
+  "samcnpc.config.radius_blocks": "%s blocks",
+  "samcnpc.config.invalid_radius": "Pickup radius must be 2–8 blocks or DEFAULT."
 }

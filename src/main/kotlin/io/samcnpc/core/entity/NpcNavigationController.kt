@@ -27,6 +27,12 @@ internal class NpcNavigationController(private val body: Mob, private val comple
     fun start(request: NpcNavigationRequest): NpcActionResult {
         val problem = request.validationProblem()
         if (problem != null) return NpcActionResult.rejected(problem, NpcActionCode.INVALID_REQUEST, NpcActionChannel.LOCOMOTION)
+        if (request.bounds != null && body.navigation !is NpcGroundNavigation) {
+            return NpcActionResult.rejected("navigation implementation cannot enforce supplied bounds", NpcActionCode.NOT_READY, NpcActionChannel.LOCOMOTION)
+        }
+        if (request.bounds != null && !request.bounds.contains(io.samcnpc.core.api.NpcPosition(body.x, body.y, body.z))) {
+            return NpcActionResult.rejected("navigation body is outside supplied bounds", NpcActionCode.OUT_OF_RANGE, NpcActionChannel.LOCOMOTION)
+        }
         val distance = distance(request)
         if (distance > MAX_DISTANCE) return NpcActionResult.rejected("navigation target is outside the bounded Core path range", NpcActionCode.OUT_OF_RANGE, NpcActionChannel.LOCOMOTION)
         if (!loaded(request)) return NpcActionResult.rejected("navigation destination is not loaded", NpcActionCode.NOT_READY, NpcActionChannel.LOCOMOTION)
@@ -43,17 +49,28 @@ internal class NpcNavigationController(private val body: Mob, private val comple
         cancel(NpcActionCode.CANCELLED, "navigation replaced by a new supplied destination")
         val action = Active(UUID.randomUUID(), request, now, distance)
         active = action
+        (body.navigation as? NpcGroundNavigation)?.routeBounds = request.bounds
         if (distance <= request.arrivalDistance) {
             val result = NpcActionResult.succeeded("already within requested navigation arrival distance", action.id, NpcActionChannel.LOCOMOTION)
             finish(action, result)
             return result
         }
         attemptPath(action, now)
+        val rejectedPath = boundsFailure(action)
+        if (rejectedPath != null) { finish(action, rejectedPath); return rejectedPath }
         return NpcActionResult.accepted("bounded navigation request submitted", action.id, NpcActionChannel.LOCOMOTION)
+    }
+
+    fun beforeTick() {
+        val action = active ?: return
+        val failure = boundsFailure(action) ?: return
+        finish(action, failure)
     }
 
     fun tick() {
         val action = active ?: return
+        val failure = boundsFailure(action)
+        if (failure != null) { finish(action, failure); return }
         val now = body.level().gameTime
         if (now > action.expiresAt) {
             finish(action, NpcActionResult.failed("navigation lease expired without renewal", NpcActionCode.EXPIRED, action.id, NpcActionChannel.LOCOMOTION))
@@ -107,9 +124,20 @@ internal class NpcNavigationController(private val body: Mob, private val comple
         action.nextPathAttempt = now + REPATH_INTERVAL
     }
 
+    private fun boundsFailure(action: Active): NpcActionResult? {
+        val bounds = action.request.bounds ?: return null
+        val detail = when {
+            !bounds.contains(io.samcnpc.core.api.NpcPosition(body.x, body.y, body.z)) -> "body displaced outside supplied navigation bounds"
+            (body.navigation as? NpcGroundNavigation)?.boundsRejected == true -> "native path leaves supplied navigation bounds"
+            else -> return null
+        }
+        return NpcActionResult.failed(detail, NpcActionCode.OUT_OF_RANGE, action.id, NpcActionChannel.LOCOMOTION)
+    }
+
     private fun finish(action: Active, result: NpcActionResult) {
         if (active !== action) return
         active = null
+        (body.navigation as? NpcGroundNavigation)?.routeBounds = null
         body.navigation.stop()
         body.moveControl.setWantedPosition(body.x, body.y, body.z, 0.0)
         body.setXxa(0.0F)

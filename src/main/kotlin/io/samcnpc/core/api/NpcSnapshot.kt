@@ -41,6 +41,8 @@ data class NpcSnapshot(
     val recentCompletions: List<NpcActionCompletion> = emptyList(),
     /** Identity of the latest accepted entity-caused hit; transient, stable between hits. */
     val lastDamageEventId: UUID? = null,
+    /** A leased rod action; transient and independent of zero-duration vanilla item use. */
+    val fishing: NpcFishingState? = null,
 )
 
 data class NpcPosition(val x: Double, val y: Double, val z: Double)

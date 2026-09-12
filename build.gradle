@@ -70,6 +70,12 @@ minecraft {
             property 'samcnpc.configSmoke', 'true'
             mods { samcnpc_core { source sourceSets.test } }
         }
+        clientFishingSmoke {
+            parent runs.client
+            workingDirectory project.file('run-fishing-smoke')
+            property 'samcnpc.fishingSmoke', 'true'
+            mods { samcnpc_core { source sourceSets.test } }
+        }
         clientAnimationSmoke {
             parent runs.client
             workingDirectory project.file('run-animation-smoke')
@@ -89,7 +95,10 @@ minecraft {
             mods { samcnpc_core { source sourceSets.test } }
         }
         server { args '--nogui' }
-        gameTestServer { workingDirectory project.file(coreGameTestDirectory) }
+        gameTestServer {
+            workingDirectory project.file(coreGameTestDirectory)
+            mods { samcnpc_core { source sourceSets.test } }
+        }
         serverRespawnSave {
             taskName 'runRespawnSmokeSave'
             parent runs.server
@@ -157,6 +166,7 @@ tasks.named('jar', Jar).configure {
 // rather than on the resource path. Keep that fixture reproducible after a clean checkout.
 tasks.register('syncGameTestStructures', Copy) {
     from layout.projectDirectory.dir('src/main/resources/gameteststructures')
+    from layout.projectDirectory.dir('src/test/resources/gameteststructures')
     into layout.projectDirectory.dir("${coreGameTestDirectory}/gameteststructures")
     doLast {
         // Extended test arenas need reproducible terrain outside the small SNBT template too.
@@ -263,6 +273,13 @@ tasks.matching { it.name == 'runRespawnSmokeLoad' }.configureEach {
 if (suiteSmokeId != null) {
     tasks.matching { it.name == 'runChunkSmokeLoad' }.configureEach { dependsOn 'runChunkSmokeSave' }
     tasks.matching { it.name == 'runRespawnSmokeLoad' }.configureEach { dependsOn 'runRespawnSmokeSave' }
+}
+
+// The new transient entity must arrive, move and disappear in a real client.
+tasks.matching { it.name == 'runClientFishingSmoke' }.configureEach {
+    def report = layout.projectDirectory.file('run-fishing-smoke/fishing-smoke-result.txt').asFile
+    doFirst { report.parentFile.mkdirs(); report.text = 'RUNNING\n' }
+    doLast { if (!report.text.startsWith('PASS ')) throw new GradleException("Fishing client smoke failed: ${report}") }
 }
 
 tasks.matching { it.name == 'runClientConfigSmoke' }.configureEach {

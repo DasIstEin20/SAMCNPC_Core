@@ -104,6 +104,28 @@ internal class ServerThreadNpcFacade(
     override fun moveBlockContainerToInventory(source: NpcBlockContainerSlot, count: Int): NpcActionResult =
         action(NpcActionChannel.INVENTORY) { delegate.moveBlockContainerToInventory(source, count) }
 
+    override fun containerTransferState(): NpcContainerTransferState? = requireServerThread { delegate.containerTransferState() }
+
+    override fun transferToContainer(inventorySlot: Int, request: NpcContainerTransferRequest): NpcContainerTransferResult =
+        transfer { delegate.transferToContainer(inventorySlot, request) }
+
+    override fun transferFromContainer(request: NpcContainerTransferRequest): NpcContainerTransferResult =
+        transfer { delegate.transferFromContainer(request) }
+
+    private fun transfer(invoke: () -> NpcContainerTransferResult): NpcContainerTransferResult {
+        val problem = actionProblem(NpcActionChannel.INVENTORY)
+        return if (problem != null) NpcContainerTransferResult(problem, 0) else invoke()
+    }
+
+    override fun fishingState(): NpcFishingState? = requireServerThread { delegate.fishingState() }
+    override fun castFishing(request: NpcFishingCast): NpcActionResult = action(request.hand.toActionChannel()) { delegate.castFishing(request) }
+    override fun continueFishing(actionId: UUID): NpcActionResult = action(NpcActionChannel.MAIN_HAND) { delegate.continueFishing(actionId) }
+    override fun reelFishing(actionId: UUID): NpcFishingReelResult {
+        val problem = actionProblem(NpcActionChannel.MAIN_HAND)
+        return if (problem != null) NpcFishingReelResult(problem, false) else delegate.reelFishing(actionId)
+    }
+    override fun cancelFishing(): NpcActionResult = action(NpcActionChannel.MAIN_HAND, delegate::cancelFishing)
+
     override fun startItemUse(hand: NpcHand): NpcActionResult =
         action(hand.toActionChannel()) { delegate.startItemUse(hand) }
 
@@ -116,7 +138,10 @@ internal class ServerThreadNpcFacade(
     override fun cancelItemUse(): NpcActionResult =
         action(NpcActionChannel.MAIN_HAND, delegate::cancelItemUse)
 
-    private fun action(channel: NpcActionChannel, invoke: () -> NpcActionResult): NpcActionResult {
+    private fun action(channel: NpcActionChannel, invoke: () -> NpcActionResult): NpcActionResult =
+        actionProblem(channel) ?: invoke()
+
+    private fun actionProblem(channel: NpcActionChannel): NpcActionResult? {
         if (!server.isSameThread) return NpcActionResult.rejected(
             "NPC capability must be called on the authoritative server thread", NpcActionCode.NOT_READY, channel,
         )
@@ -124,7 +149,13 @@ internal class ServerThreadNpcFacade(
             "NPC capability refers to an unloaded, removed or replaced body; acquire its current runtime",
             NpcActionCode.NOT_FOUND, channel,
         )
-        return invoke()
+        if (delegate.fishingState()?.phase == NpcFishingPhase.REELING) return NpcActionResult.rejected(
+            "a fishing payout is executing; callbacks cannot recursively mutate this NPC", NpcActionCode.CONFLICT, channel,
+        )
+        if (delegate.containerTransferState()?.phase == NpcContainerTransferPhase.EXECUTING) return NpcActionResult.rejected(
+            "a container transfer is executing; callbacks cannot recursively mutate this NPC", NpcActionCode.CONFLICT, channel,
+        )
+        return null
     }
 
     private fun <T> requireServerThread(invoke: () -> T): T {

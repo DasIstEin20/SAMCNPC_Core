@@ -119,6 +119,7 @@ object NpcConfigClientSmoke {
             Phase.LOCAL -> if (age > 12) {
                 check(!buttons()[1].active) { "World settings were editable without a world" }
                 choose(NpcSetting.ANIMATIONS, SettingChoice.NO)
+                chooseRadius(4.0)
                 show(NpcSetting.KEEP_INVENTORY)
                 check(!row(NpcSetting.KEEP_INVENTORY).active) { "Keep inventory was available with respawn disabled" }
                 choose(NpcSetting.RESPAWN, SettingChoice.YES)
@@ -126,6 +127,7 @@ object NpcConfigClientSmoke {
                 choose(NpcSetting.DROP_ITEMS_ON_DEATH, SettingChoice.NO)
                 apply()
                 check(NpcSettingsConfig.global.choice(NpcSetting.ANIMATIONS) == SettingChoice.NO)
+                check(NpcSettingsConfig.global.radius() == 4.0)
                 check(NpcSettingsConfig.deathPolicy().respawn && NpcSettingsConfig.deathPolicy().items == io.samcnpc.core.health.NpcDeathPolicy.Items.KEEP)
                 capture("01-global.png", "Main-menu Apply persisted global animations=NO; world tab unavailable")
                 advance(Phase.CREATE_A)
@@ -144,12 +146,15 @@ object NpcConfigClientSmoke {
                 buttons()[1].onPress()
                 show(NpcSetting.ANIMATIONS)
                 check(!row(NpcSetting.ANIMATIONS).active) { "Global No failed to lock the world's row" }
+                showRadius()
+                check(!radiusRow().active && checkNotNull(NpcSettingsInbox.snapshot).globalPickupRadius == 4.0)
                 capture("02-world-locked.png", "In-world reply is editable for host; Global No locks world animations")
                 advance(Phase.UNLOCK)
             }
             Phase.UNLOCK -> if (age > 12) {
                 buttons()[0].onPress()
                 choose(NpcSetting.ANIMATIONS, SettingChoice.DEFAULT)
+                chooseRadius(0.0)
                 choose(NpcSetting.KEEP_INVENTORY, SettingChoice.DEFAULT)
                 choose(NpcSetting.RESPAWN, SettingChoice.DEFAULT)
                 choose(NpcSetting.DROP_ITEMS_ON_DEATH, SettingChoice.DEFAULT)
@@ -158,7 +163,9 @@ object NpcConfigClientSmoke {
             }
             Phase.GLOBAL_SAVE -> if (saved() && age > 20) {
                 check(checkNotNull(NpcSettingsInbox.snapshot).global[NpcSetting.ANIMATIONS.ordinal] == SettingChoice.DEFAULT)
+                check(checkNotNull(NpcSettingsInbox.snapshot).globalPickupRadius == 0.0)
                 buttons()[1].onPress()
+                chooseRadius(5.0)
                 show(NpcSetting.ANIMATIONS)
                 check(row(NpcSetting.ANIMATIONS).active)
                 choose(NpcSetting.ANIMATIONS, SettingChoice.NO)
@@ -181,10 +188,13 @@ object NpcConfigClientSmoke {
                 check(listOf(NpcSetting.RESPAWN, NpcSetting.KEEP_INVENTORY, NpcSetting.DROP_ITEMS_ON_DEATH).all {
                     checkNotNull(sample).local[it.ordinal] == SettingChoice.YES
                 })
+                check(checkNotNull(NpcSettingsInbox.snapshot).worldPickupRadius == 5.0)
+                showRadius()
+                results.add("Real Forge GUI saved world pickup radius 5 after global DEFAULT acknowledgement")
                 results.add("Scrolled real global/world GUI, disabled Keep inventory before Respawn, and saved all three death settings through server acknowledgement")
                 val body = mc.level?.getEntity(checkNotNull(sample).entityId) as? SamcnpcEntity ?: return
                 check(!body.animationsEnabled()) { "World animation setting did not synchronize to the real client entity" }
-                capture("03-world-settings.png", "Server Apply saved world A animation=NO, ignoreMissingTool=$missingToolChoice, bareHandsOnly=$bareHandsChoice, toolDurability=$durabilityChoice; client entity synchronized")
+                capture("03-world-settings.png", "Server Apply saved world A pickupRadius=5, animation=NO, ignoreMissingTool=$missingToolChoice, bareHandsOnly=$bareHandsChoice, toolDurability=$durabilityChoice; client entity synchronized")
                 advance(Phase.WORK)
             }
             Phase.WORK -> if (age > 12) {
@@ -209,6 +219,7 @@ object NpcConfigClientSmoke {
             Phase.B_VIEW -> if (serverScreenReady() && age > 20) {
                 buttons()[1].onPress()
                 check(checkNotNull(NpcSettingsInbox.snapshot).world.all { it == SettingChoice.DEFAULT })
+                check(checkNotNull(NpcSettingsInbox.snapshot).worldPickupRadius == 0.0)
                 capture("04-other-world.png", "World B has all DEFAULT settings and animations ON independently of A")
                 advance(Phase.LOAD_A)
             }
@@ -240,6 +251,8 @@ object NpcConfigClientSmoke {
                     checkNotNull(NpcSettingsInbox.snapshot).world[it.ordinal] == SettingChoice.YES
                 })
                 show(NpcSetting.DROP_ITEMS_ON_DEATH)
+                check(checkNotNull(NpcSettingsInbox.snapshot).worldPickupRadius == 5.0)
+                results.add("Pickup radius GUI: global 4 locks world, global DEFAULT unlocks, world 5 survives reload; separate world inherits 2")
                 capture("05-reloaded-world.png", "World A reload restored all settings, including respawn/keep/drop=YES; global DEFAULT persists")
                 advance(Phase.START_RESPAWN)
             }
@@ -358,6 +371,27 @@ object NpcConfigClientSmoke {
             }
         }
         check(row(setting).visible) { "Cannot scroll to $setting" }
+    }
+    private fun radiusRow(): Button = buttons().filter { it.width == 106 }.sortedBy { it.y }.last()
+    private fun showRadius() {
+        repeat(NpcSetting.entries.size + 1) {
+            if (radiusRow().visible) return
+            val screen = checkNotNull(Minecraft.getInstance().screen)
+            screen.mouseScrolled(screen.width / 2.0, screen.height / 2.0, -1.0)
+        }
+        check(radiusRow().visible) { "Cannot scroll to pickup radius" }
+    }
+    private fun chooseRadius(value: Double) {
+        showRadius()
+        val wanted = if (value == 0.0) net.minecraft.network.chat.Component.translatable("samcnpc.config.default").string else
+            net.minecraft.network.chat.Component.translatable("samcnpc.config.radius_blocks", value.toString().removeSuffix(".0")).string
+        repeat(14) {
+            val button = radiusRow()
+            check(button.active)
+            if (button.message.string == wanted) return
+            button.onPress()
+        }
+        error("Could not select pickup radius $value")
     }
     private fun choose(setting: NpcSetting, choice: SettingChoice) {
         show(setting)

@@ -19,6 +19,7 @@ object ClientModEvents {
     fun registerRenderers(event: EntityRenderersEvent.RegisterRenderers) {
         event.registerEntityRenderer(ModEntities.NPC.get(), ::SamcnpcRenderer)
         event.registerEntityRenderer(ModEntities.NPC_TRIDENT.get(), ::ThrownTridentRenderer)
+        event.registerEntityRenderer(ModEntities.NPC_FISHING_HOOK.get(), ::NpcFishingHookRenderer)
     }
 
     @SubscribeEvent

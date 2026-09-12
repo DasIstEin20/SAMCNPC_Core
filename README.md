@@ -13,7 +13,7 @@ through commands or an API. It provides movement, animations, inventory, combat,
 Decisions about what the character should do belong to the separate Behavior module or another add-on.
 
 After being summoned, the NPC stays idle until instructed. It can still pick up items that come
-into direct contact with its body.
+within its configured pickup radius (2 blocks by default, adjustable up to 8).
 
 ## Features
 
@@ -163,6 +163,7 @@ Press **Apply** before switching tabs or closing; uncommitted edits are discarde
 | Respawn | No |
 | Keep inventory (requires Respawn) | No |
 | Drop items after being killed | Yes |
+| Item pickup radius | 2 blocks |
 
 Both Default preserve existing per-NPC animation/chunk-loading commands and the world's
 hearts setting. Forced GUI settings lock those equivalent commands; return both scopes to
@@ -180,6 +181,42 @@ Global settings live in `config/samcnpc-core-global.toml`; world settings live i
 `<save>/serverconfig/samcnpc-core-world.toml`. In-world edits are acknowledged by the server
 and require the integrated host or an operator. A multiplayer client's local global config
 does not override the server. Changes affect loaded NPCs without restarting the world.
+
+## Item pickup radius
+
+Use **Mods → SAMCNPC Core → Config → Item pickup radius**, then **Apply**, or:
+
+```text
+/samcnpc pickupradius
+/samcnpc pickupradius 5
+/samcnpc pickupradius world 4.25
+/samcnpc pickupradius global 6
+/samcnpc pickupradius global default
+/samcnpc pickupradius world default
+```
+
+The first command shows effective, global and world values. A bare number changes this
+world. Values range from 2 to 8 blocks; the GUI advances in half-block steps and commands
+also accept fractions. A global number forces the radius across saves and locks the world
+control; global Default delegates to the world. Both Default use 2. Commands and in-world
+GUI edits require the integrated host or an operator and apply live.
+
+The radius is a sphere measured from the NPC's feet and applies to passive and explicit
+pickup. It does not pull items visually or make the NPC walk toward them. Pickup delay,
+inventory capacity, event vetoes and Behavior work reservations remain enforced.
+Pickup does not select another hotbar slot or replace the held stack to favor new loot.
+
+## Fishing, machines and bounded navigation
+
+Core supports one physical fishing hook per NPC, explicit cast/renew/reel/cancel, vanilla
+fishing loot and rod wear. Both hands render; stale action IDs cannot produce another payout.
+Choosing a pond and deciding when to reel belong to Behavior. Player-only fishing hooks
+from other mods are not emulated.
+
+Container endpoints include a dimension, position and optional side. Transfers reobserve
+vanilla containers or Forge item handlers and return actual moved amounts. Unsupported
+player-only interfaces remain explicit. Navigation requests can include a finite boundary
+checked against native paths and physical position. See [Core API](src/main/kotlin/io/samcnpc/core/api).
 
 ## Respawn, inventory and spawn points
 
@@ -259,7 +296,7 @@ when finished, and a missing or unsuccessful result fails the Gradle task. The t
 included in the shipped JAR.
 `runClientConfigSmoke` exercises the real Forge config screen, server acknowledgements,
 client entity synchronization, two independent saves and reload. It uses `run-config-smoke/`
-and fails if its result is missing. Core's 103 dedicated GameTests include double chests,
+and fails if its result is missing. Core's 132 dedicated GameTests include double chests,
 all 33 vanilla effects, tool modes, durability, hostile targeting and real chunk tickets.
 The chunk smoke uses two separate server JVMs and an isolated `run-chunk-smoke` save to verify
 terrain generation, NPC/inventory persistence and automatic ticking after restart, with zero players.
@@ -270,7 +307,7 @@ A normal server launched with `runServer` requires the user to accept Minecraft'
 
 ## Project status
 
-This snapshot includes 36 unit tests and mechanical observations for crops, food, tools
+This snapshot includes 45 unit tests and mechanical observations for crops, food, tools
 and block environments. Inactive NPC history is bounded to 4096 entries. Final server shutdown
 releases the Core service and rejects recreation after stop. The skin test with two genuinely
 signed-in Minecraft accounts remains pending.

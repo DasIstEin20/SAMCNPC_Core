@@ -63,6 +63,7 @@ object SamcnpcCommands {
                 .then(NpcActivityCommands.animations())
                 .then(NpcActivityCommands.chunkLoading())
                 .then(NpcSpawnPointCommands.branch())
+                .then(NpcPickupCommands.branch())
                 .then(NpcEffectCommands.branch(event.buildContext))
                 .then(
                     Commands.literal("hearts")

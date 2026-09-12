@@ -1,6 +1,8 @@
 package io.samcnpc.core.health
 
 import io.samcnpc.core.SamcnpcCore
+import io.samcnpc.core.entity.SamcnpcEntity
+import io.samcnpc.core.entity.NpcContainerTransferJournal
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.ListTag
 import net.minecraft.nbt.Tag
@@ -94,7 +96,7 @@ internal class NpcRespawnData : SavedData() {
         private const val MAX_TOTAL_BYTES = 16777216L
         internal val BODY_KEYS = setOf("UUID", "CustomName", "CustomNameVisible", "samcnpcDataVersion",
             "samcnpcLife", "samcnpcSummonPoint", "summoner", "skin", "Items", "ammunition", "totem", "selectedSlot",
-            "ArmorItems", "HandItems", "Attributes")
+            "ArmorItems", "HandItems", "Attributes", NpcContainerTransferJournal.KEY)
 
         fun load(tag: CompoundTag): NpcRespawnData {
             val result = NpcRespawnData()
@@ -115,7 +117,7 @@ internal class NpcRespawnData : SavedData() {
                     require(listOf("npc", "summoner", "previousLife", "nextLife").all(item::hasUUID))
                     require(item.contains("readyAt", Tag.TAG_LONG.toInt()) && item.getLong("readyAt") >= 0L)
                     val body = item.getCompound("body")
-                    require(body.allKeys.all { it in BODY_KEYS } && body.getInt("samcnpcDataVersion") == 4)
+                    require(body.allKeys.all { it in BODY_KEYS } && body.getInt("samcnpcDataVersion") in 4..SamcnpcEntity.DATA_VERSION)
                     require(body.hasUUID("UUID") && body.getUUID("UUID") == item.getUUID("npc"))
                     require(body.hasUUID("samcnpcLife") && body.getUUID("samcnpcLife") == item.getUUID("nextLife"))
                     require(body.getCompound("summoner").hasUUID("uuid") &&
