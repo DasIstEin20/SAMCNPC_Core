@@ -27,7 +27,23 @@ internal class NpcGroundNavigation(private val body: Mob, level: Level) : Ground
         // Vanilla trimPath can raise nodes above cauldrons after accepting the input path.
         val actual = this.path
         if (actual != null && !withinBounds(actual)) { stop(); return false }
+        if (accepted && actual != null) advanceCurrentCell(actual)
         return accepted
+    }
+
+    private fun advanceCurrentCell(path: Path) {
+        if (path.nextNodeIndex != 0 || path.nodeCount < 2 || !body.onGround()) return
+        val first = path.getEntityPosAtNode(body, 0)
+        if (BlockPos.containing(first) != body.blockPosition()) return
+        val next = path.getEntityPosAtNode(body, 1)
+        if (kotlin.math.abs(next.y - body.y) > 0.05) return
+        // The native first node recenters the body inside its existing cell. A neighbor
+        // can occupy that center and block even a route leading away from it. Advance
+        // only this redundant node, after checking the flat segment for solid corners;
+        // native MoveControl still performs all motion and collisions. See ADR 0084.
+        val segment = body.boundingBox.expandTowards(next.x - body.x, 0.0, next.z - body.z).deflate(1.0e-7)
+        if (body.level().getBlockCollisions(body, segment).iterator().hasNext()) return
+        path.advance()
     }
 
     private fun withinBounds(path: Path): Boolean {

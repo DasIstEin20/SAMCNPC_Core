@@ -23,6 +23,40 @@ object NpcPreciseNavigationGameTests {
     @GameTest(template = "samcnpccoregametests.empty", timeoutTicks = 180, batch = "precise_navigation")
     fun suppliedFractionalEndpointIsReachedFromTheEast(helper: GameTestHelper) = approach(helper, 9)
 
+    @JvmStatic
+    @GameTest(template = "samcnpccoregametests.empty", timeoutTicks = 180, batch = "occupied_start_navigation")
+    fun routeLeavesAnOccupiedStartingCellTowardTheWest(helper: GameTestHelper) = occupiedStart(helper, false)
+
+    @JvmStatic
+    @GameTest(template = "samcnpccoregametests.empty", timeoutTicks = 180, batch = "occupied_start_navigation")
+    fun routeLeavesAnOccupiedStartingCellTowardTheEast(helper: GameTestHelper) = occupiedStart(helper, true)
+
+    private fun occupiedStart(helper: GameTestHelper, east: Boolean) {
+        for (x in 0..10) for (z in 0..6) helper.setBlock(BlockPos(x, 1, z), Blocks.STONE)
+        val npc = checkNotNull(ModEntities.NPC.get().create(helper.level))
+        val waiting = checkNotNull(ModEntities.NPC.get().create(helper.level))
+        val at = helper.absolutePos(BlockPos(5, 2, 2))
+        npc.moveTo(at.x + if (east) 0.85 else 0.15, at.y.toDouble(), at.z + 0.5, 0.0F, 0.0F)
+        waiting.moveTo(at.x + if (east) 0.24 else 0.76, at.y.toDouble(), at.z + 0.506, 0.0F, 0.0F)
+        check(helper.level.addFreshEntity(npc) && helper.level.addFreshEntity(waiting))
+        helper.runAfterDelay(2) {
+            val destination = NpcPosition(at.x + if (east) 1.5 else -0.5, at.y.toDouble(), at.z + 2.5)
+            val started = npc.navigateTo(NpcNavigationRequest(destination, arrivalDistance = 0.25))
+            check(started.status == NpcActionStatus.ACCEPTED)
+            val id = checkNotNull(started.actionId)
+            helper.runAfterDelay(140) {
+                val snapshot = npc.snapshot()
+                check(snapshot.navigation == null && npc.distanceToSqr(destination.x, destination.y, destination.z) <= 0.25 * 0.25) {
+                    "occupied first path cell blocked the supplied route: " + snapshot.position
+                }
+                val completions = snapshot.recentCompletions.filter { it.result.actionId == id }
+                check(completions.size == 1 && completions.single().result.status == NpcActionStatus.SUCCEEDED)
+                check(waiting.isAlive && waiting.health == waiting.maxHealth && waiting.snapshot().navigation == null)
+                npc.discard(); waiting.discard(); helper.succeed()
+            }
+        }
+    }
+
     private fun approach(helper: GameTestHelper, startX: Int) {
         for (x in 0..10) for (z in 0..4) helper.setBlock(BlockPos(x, 1, z), Blocks.STONE)
         val npc = checkNotNull(ModEntities.NPC.get().create(helper.level))

@@ -297,7 +297,7 @@ wyłączenie i ponowne włączenie animacji (52 scenariusze). Klient zamyka się
 zakończeniu, a brak poprawnego wyniku powoduje błąd zadania Gradle. Kod tego testu nie trafia do JAR-a.
 `runClientConfigSmoke` sprawdza prawdziwy ekran Forge, potwierdzenia serwera, synchronizację
 postaci, niezależność dwóch zapisów i ponowne wczytanie. Używa katalogu `run-config-smoke/`.
-132 serwerowe GameTesty Core obejmują m.in. podwójne skrzynki, wszystkie 33 efekty vanilli,
+134 serwerowe GameTesty Core obejmują m.in. podwójne skrzynki, wszystkie 33 efekty vanilli,
 pracę ręką, zużywanie narzędzi, wrogość mobów i rzeczywiste tickety chunków.
 Test chunków uruchamia dwa osobne procesy serwera i używa izolowanego zapisu `run-chunk-smoke`,
 sprawdzając generowanie terenu, zapis NPC/ekwipunku i automatyczne tickowanie po restarcie bez graczy.
@@ -325,3 +325,9 @@ przypadki broni i zaklęć wymagają osobnych testów integracyjnych.
 ## Licencja
 
 [MIT](LICENSE). Projekt społecznościowy, niepowiązany oficjalnie z Mojang ani Microsoft.
+
+Zlecona nawigacja potrafi teraz opuścić zajmowane pole bez wcześniejszego wchodzenia
+w jego środek zablokowany przez sąsiedniego NPC. Kontrola kolizji zachowuje narożniki,
+cele, granice trasy i ograniczone terminy. Osobny build przeszedł 45 testów jednostkowych
+i 134 GameTesty, w tym dwa kierunki wyjścia z zablokowanego pola.
+[ADR 0084](docs/adr/0084-native-route-start-cell-progress.md).

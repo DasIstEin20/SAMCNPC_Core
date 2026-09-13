@@ -296,7 +296,7 @@ when finished, and a missing or unsuccessful result fails the Gradle task. The t
 included in the shipped JAR.
 `runClientConfigSmoke` exercises the real Forge config screen, server acknowledgements,
 client entity synchronization, two independent saves and reload. It uses `run-config-smoke/`
-and fails if its result is missing. Core's 132 dedicated GameTests include double chests,
+and fails if its result is missing. Core's 134 dedicated GameTests include double chests,
 all 33 vanilla effects, tool modes, durability, hostile targeting and real chunk tickets.
 The chunk smoke uses two separate server JVMs and an isolated `run-chunk-smoke` save to verify
 terrain generation, NPC/inventory persistence and automatic ticking after restart, with zero players.
@@ -325,3 +325,9 @@ cases require separate integration tests.
 ## License
 
 [MIT](LICENSE). A community project, not officially affiliated with Mojang or Microsoft.
+
+Supplied navigation routes can now leave an occupied starting cell without first
+recentering into a neighboring NPC. A solid-block clearance check preserves corner
+collisions; destinations, route bounds and finite deadlines remain unchanged. The
+standalone build passed 45 units and 134 native cases, including two opposite-side
+starting-cell regressions. See [ADR 0084](docs/adr/0084-native-route-start-cell-progress.md).
