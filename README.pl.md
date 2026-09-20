@@ -308,10 +308,12 @@ Zwykły serwer uruchamiany przez `runServer` wymaga zaakceptowania EULA Minecraf
 
 ## Stan projektu
 
-Ta wersja zawiera 45 testów jednostkowych oraz mechaniczne obserwacje do pracy z plonami,
+Ta wersja zawiera 47 testów jednostkowych oraz mechaniczne obserwacje do pracy z plonami,
 żywnością, narzędziami i otoczeniem bloków. Nieaktywna historia NPC jest ograniczona do 4096
 wpisów. Zamknięcie serwera zwalnia usługę Core i uniemożliwia jej ponowne utworzenie po stopie.
-Test skórek na dwóch rzeczywiście zalogowanych kontach Minecraft pozostaje do wykonania.
+Test skórek na dwóch zalogowanych kontach Minecraft pozostaje ręczny i nieblokujący.
+Nowe odczyty opisują [Body inspection](docs/BODY_INSPECTION.md) i
+[Visual observations](docs/VISUAL_OBSERVATIONS.md).
 
 Wersja rozwojowa **0.1.0**. NPC jest dedykowaną encją, dlatego część funkcji i integracji
 wymagających bezpośrednio obiektu `Player` pozostaje nieobsługiwana. Dotyczy to m.in. części haków

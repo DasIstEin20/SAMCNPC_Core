@@ -307,10 +307,11 @@ A normal server launched with `runServer` requires the user to accept Minecraft'
 
 ## Project status
 
-This snapshot includes 45 unit tests and mechanical observations for crops, food, tools
+This snapshot includes 47 unit tests and mechanical observations for crops, food, tools
 and block environments. Inactive NPC history is bounded to 4096 entries. Final server shutdown
-releases the Core service and rejects recreation after stop. The skin test with two genuinely
-signed-in Minecraft accounts remains pending.
+releases the Core service and rejects recreation after stop. The two-account authenticated skin test remains a nonblocking manual check.
+Own-body inspection and bounded real-eye sensors are documented in
+[Body inspection](docs/BODY_INSPECTION.md) and [Visual observations](docs/VISUAL_OBSERVATIONS.md).
 
 Development version **0.1.0**. The NPC is a dedicated entity, so some features and integrations
 that directly require a `Player` object remain unsupported. These include some combat/interaction
