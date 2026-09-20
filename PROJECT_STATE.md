@@ -1,3 +1,13 @@
+# Visual observation update — 2026-09-20
+
+Explicit real-eye entity/block/fluid sensors expose apparent copied facts only,
+with radius/candidate/result caps, blindness/unsupported/unknown outcomes and
+loaded-only rays. No automatic policy or private container/body read was added.
+Canonical clean build passed 47 Core units and 141 Core native cases, actual Core
+animation client and both three-mod smokes. The whole milestone passed 412 units,
+210 Behavior native cases and 12 actual client operations. Source copies match.
+Standalone clean build, 47 units and all 141 required native cases passed; evidence: docs/VALIDATION.json. See docs/VISUAL_OBSERVATIONS.md.
+
 # Core status — 2026-09-20
 
 On-demand immutable inspectBody() is implemented and verified in the canonical

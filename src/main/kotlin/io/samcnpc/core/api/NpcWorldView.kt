@@ -18,6 +18,12 @@ interface NpcWorldView {
      * Read-only visibility; it grants no interaction reach and never loads missing chunks. */
     fun visibleBlockFrom(feet: NpcPosition, target: NpcBlockPosition): Boolean? = null
     fun queryEntities(query: NpcEntityQuery): List<NpcEntityObservation>
+    /** Explicit bounded visual sensor; absence of this capability is not an empty observation. */
+    fun observeVisibleEntities(query: NpcVisualEntityQuery): NpcVisualEntityScan =
+        NpcVisualEntityScan.Unavailable(NpcVisualUnavailableReason.UNSUPPORTED)
+    /** Supplied visible surface within 12 blocks of the real eye; unavailable is never an air claim. */
+    fun observeVisibleBlock(position: NpcBlockPosition): NpcVisualBlockRead =
+        NpcVisualBlockRead.Unavailable(NpcVisualUnavailableReason.UNSUPPORTED)
     fun observeBlock(position: NpcBlockPosition): NpcBlockObservation?
     /** Detailed facts are opt-in: ordinary navigation/forest scans need no light or growth queries. */
     fun observeBlockDetails(position: NpcBlockPosition): NpcBlockObservation? = observeBlock(position)

@@ -16,6 +16,9 @@ import io.samcnpc.core.api.NpcRaycastResult
 import io.samcnpc.core.api.NpcItemStackSnapshot
 import io.samcnpc.core.api.NpcItemClassifier
 import io.samcnpc.core.api.NpcVector
+import io.samcnpc.core.api.NpcVisualBlockRead
+import io.samcnpc.core.api.NpcVisualEntityQuery
+import io.samcnpc.core.api.NpcVisualEntityScan
 import io.samcnpc.core.api.NpcWorldView
 import io.samcnpc.core.api.NpcBlockEnvironment
 import io.samcnpc.core.api.NpcPlantingSiteQuery
@@ -99,6 +102,16 @@ internal class NpcEntityWorldView(
         val hit = blocks.clip(ClipContext(start,end,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,npc))
         if (blocks.unavailable) return null
         return hit.type == HitResult.Type.BLOCK && hit.blockPos == position
+    }
+
+    override fun observeVisibleEntities(query: NpcVisualEntityQuery): NpcVisualEntityScan {
+        requireAvailable()
+        return NpcVisualEntitySensor.observe(npc, query)
+    }
+
+    override fun observeVisibleBlock(position: NpcBlockPosition): NpcVisualBlockRead {
+        requireAvailable()
+        return NpcVisualBlockSensor.observe(npc, position, this)
     }
 
     override fun queryEntities(query: NpcEntityQuery): List<NpcEntityObservation> {
