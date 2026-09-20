@@ -411,6 +411,8 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         return NpcActionResult.succeeded("NPC dismissed", channel = NpcActionChannel.INVENTORY)
     }
 
+    override fun inspectBody(): io.samcnpc.core.api.NpcBodyInspection = NpcBodyInspections.capture(this)
+
     override fun snapshot(): NpcSnapshot {
         val hurtAge = if (recentHurtGameTime == Long.MIN_VALUE) null else (level().gameTime - recentHurtGameTime).coerceAtLeast(0)
         val fraction = if (maxHealth <= 0.0F) 0.0 else (health.toDouble() / maxHealth.toDouble()).coerceIn(0.0, 1.0)

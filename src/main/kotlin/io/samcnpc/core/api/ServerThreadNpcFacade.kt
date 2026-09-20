@@ -16,6 +16,8 @@ internal class ServerThreadNpcFacade(
     override val npcUuid: UUID
         get() = delegate.npcUuid
 
+    override fun inspectBody(): NpcBodyInspection? = requireServerThread { delegate.inspectBody() }
+
     override fun snapshot(): NpcSnapshot = requireServerThread { delegate.snapshot() }
 
     override fun inventoryContents(): List<NpcInventoryEntry> = requireServerThread { delegate.inventoryContents() }

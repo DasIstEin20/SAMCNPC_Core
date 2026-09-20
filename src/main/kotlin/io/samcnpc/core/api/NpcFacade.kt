@@ -9,6 +9,8 @@ import java.util.UUID
 interface NpcFacade {
     val npcUuid: UUID
 
+    /** Explicit detailed inspection; null means this facade lacks the capability. */
+    fun inspectBody(): NpcBodyInspection? = null
     fun snapshot(): NpcSnapshot
     fun inventoryContents(): List<NpcInventoryEntry>
     /** Null for a fresh body, an unsupported NBT version, or a facade without this capability. */
