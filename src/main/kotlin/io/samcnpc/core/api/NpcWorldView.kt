@@ -24,6 +24,8 @@ interface NpcWorldView {
     /** Supplied visible surface within 12 blocks of the real eye; unavailable is never an air claim. */
     fun observeVisibleBlock(position: NpcBlockPosition): NpcVisualBlockRead =
         NpcVisualBlockRead.Unavailable(NpcVisualUnavailableReason.UNSUPPORTED)
+    /** Opt-in exact-item stock at one visible reachable vanilla chest; unavailable never means zero. */
+    fun observeVisibleStock(query: NpcStockQuery): NpcStockRead = NpcStockRead.Unavailable(NpcStockUnavailable.UNSUPPORTED)
     fun observeBlock(position: NpcBlockPosition): NpcBlockObservation?
     /** Detailed facts are opt-in: ordinary navigation/forest scans need no light or growth queries. */
     fun observeBlockDetails(position: NpcBlockPosition): NpcBlockObservation? = observeBlock(position)

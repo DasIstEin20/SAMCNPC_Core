@@ -197,6 +197,11 @@ internal class NpcEntityWorldView(
             level.getMaxLocalRawBrightness(position))
     }
 
+    override fun observeVisibleStock(query: io.samcnpc.core.api.NpcStockQuery): io.samcnpc.core.api.NpcStockRead {
+        requireAvailable()
+        return NpcStockObservations.read(npc, query)
+    }
+
     override fun observeContainer(endpoint: NpcContainerEndpoint): NpcContainerObservation? {
         requireAvailable()
         if (endpoint.dimensionId != dimensionId) return null
