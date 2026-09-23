@@ -132,6 +132,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     private val rangedController = NpcRangedAttackController(this, ::completeAction)
     private val navigationController = NpcNavigationController(this, ::completeAction)
     private val itemUseController = NpcItemUseController(this, ::completeAction)
+    private var blockUseCallbackActive = false
     private var recentActionCompletions: List<NpcActionCompletion> = emptyList()
 
     init {
@@ -663,7 +664,6 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         navigation.stop()
         setXxa(0.0F)
         setZza(0.0F)
-        stopDirectMovement()
         setSprinting(false)
         setShiftKeyDown(false)
         if (actionId != null) {
@@ -699,10 +699,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun attackEntity(entityUuid: UUID): NpcActionResult {
-        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
-        if (rangedController.isActive || blockBreakController.isActive || isUsingItem) {
-            return NpcActionResult.rejected("finish the active hand action before performing melee", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
-        }
+        handActionProblem(NpcActionChannel.COMBAT)?.let { return it }
         val target = resolveEntity(entityUuid) as? LivingEntity
             ?: return NpcActionResult.rejected("entity is unavailable in this dimension")
         val denied = NpcCombatRules.rejection(this, target)
@@ -775,10 +772,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun startRangedAttack(entityUuid: UUID, hand: NpcHand): NpcActionResult {
-        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
-        if (blockBreakController.isActive || itemUseController.actionId != null) {
-            return NpcActionResult.rejected("cancel the conflicting block or held action before ranged use", NpcActionCode.CONFLICT, NpcActionChannel.COMBAT)
-        }
+        handActionProblem(NpcActionChannel.COMBAT)?.let { return it }
         return rangedController.start(entityUuid, hand)
     }
 
@@ -852,10 +846,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun startBlockBreak(position: NpcBlockPosition): NpcActionResult {
-        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
-        if (rangedController.isActive || isUsingItem) {
-            return NpcActionResult.rejected("cancel the conflicting ranged or item use before breaking a block", NpcActionCode.CONFLICT, NpcActionChannel.BLOCK_ACTION)
-        }
+        handActionProblem(NpcActionChannel.BLOCK_ACTION)?.let { return it }
         return blockBreakController.start(position)
     }
 
@@ -869,10 +860,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * are reported as unsupported instead of passing a counterfeit player to mod code.
      */
     override fun useItemInAir(hand: NpcHand): NpcActionResult {
-        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
-        if (rangedController.isActive) {
-            return NpcActionResult.rejected("cancel the ranged attack before using another item", NpcActionCode.CONFLICT, hand.actionChannel())
-        }
+        handActionProblem(hand.actionChannel())?.let { return it }
         val stack = getItemInHand(hand.toInteractionHand())
         if (stack.isEmpty) {
             return NpcActionResult.rejected("${hand.name.lowercase()} hand is empty", NpcActionCode.NOT_READY, hand.actionChannel())
@@ -906,13 +894,8 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * rejected explicitly rather than impersonating a ServerPlayer.
      */
     override fun useItemOnBlock(hit: NpcBlockHit, hand: NpcHand): NpcActionResult {
-        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
-        if (rangedController.isActive) {
-            return NpcActionResult.rejected("cancel the ranged attack before using an item on a block", NpcActionCode.CONFLICT, NpcActionChannel.INTERACTION)
-        }
-        if (isUsingItem) {
-            return NpcActionResult.rejected("cancel item use before using an item on a block", NpcActionCode.CONFLICT, NpcActionChannel.INTERACTION)
-        }
+        handActionProblem(NpcActionChannel.INTERACTION)?.let { return it }
+        NpcInteractionGeometry.hit(this, hit)?.let { return it }
         val blockPos = BlockPos(hit.block.x, hit.block.y, hit.block.z)
         val location = Vec3(hit.location.x, hit.location.y, hit.location.z)
         if (distanceToSqr(location) > BLOCK_INTERACTION_REACH_SQR) {
@@ -926,19 +909,32 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         if (stack.isEmpty) {
             return NpcActionResult.rejected("${hand.name.lowercase()} hand is empty", NpcActionCode.NOT_READY, NpcActionChannel.INTERACTION)
         }
+        // Forge's placement wrapper owns one world-global snapshot scope and has no exception
+        // finally. Never enter another scope, and release only our bookkeeping after a failure.
+        if (level().captureBlockSnapshots || level().restoringBlockSnapshots || level().capturedBlockSnapshots.isNotEmpty()) {
+            return NpcActionResult.rejected("foreign block mutation is already in progress", NpcActionCode.CONFLICT, NpcActionChannel.INTERACTION)
+        }
         val blockBeforeUse = level().getBlockState(blockPos)
         val vanillaHoe = stack.item is net.minecraft.world.item.HoeItem &&
             net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(stack.item)?.namespace == "minecraft"
         val result = try {
+            blockUseCallbackActive = true
             NpcToolDurability.perform(stack) {
                 stack.useOn(UseOnContext(level(), null, interactionHand, stack, BlockHitResult(location, hit.face.toDirection(), blockPos, hit.insideBlock)))
             }
-        } catch (error: ClassCastException) {
-            return NpcActionResult.unsupported("${itemId(stack)} requires a real Player for block use", NpcActionChannel.INTERACTION)
-        } catch (error: NullPointerException) {
-            // A number of third-party items dereference UseOnContext.player. Keep their failure
-            // contained and explicit; a dedicated NPC may not substitute a fake ServerPlayer.
-            return NpcActionResult.unsupported("${itemId(stack)} requires a real Player for block use", NpcActionChannel.INTERACTION)
+        } catch (error: RuntimeException) {
+            level().captureBlockSnapshots = false
+            level().restoringBlockSnapshots = false
+            level().capturedBlockSnapshots.clear()
+            if (interactionHand == InteractionHand.MAIN_HAND) refreshMainHandAttributes()
+            // World and stack changes are retained: arbitrary mod callbacks cannot be rolled back.
+            val uncertain = NpcActionResult.failed("foreign item block-use failed after callback entry; effects require reconciliation",
+                NpcActionCode.EFFECT_UNCERTAIN, UUID.randomUUID(), NpcActionChannel.INTERACTION)
+            SamcnpcCore.LOGGER.error("Foreign item block use failed npc={} item={} action={}", uuid, itemId(stack), uncertain.actionId, error)
+            completeAction(uncertain)
+            return uncertain
+        } finally {
+            blockUseCallbackActive = false
         }
         if (!result.consumesAction()) {
             return NpcActionResult.rejected("${itemId(stack)} did not accept the supplied block hit", NpcActionCode.WORLD_REJECTED, NpcActionChannel.INTERACTION)
@@ -961,7 +957,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * the unsupported boundary explicit until Forge offers an entity-safe hook.
      */
     override fun interactEntity(hit: NpcEntityHit, hand: NpcHand): NpcActionResult {
-        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
+        handActionProblem(NpcActionChannel.INTERACTION)?.let { return it }
         val target = resolveEntity(hit.entityUuid)
             ?: return NpcActionResult.rejected("entity is unavailable in this dimension", NpcActionCode.NOT_FOUND, NpcActionChannel.INTERACTION)
         if (target.uuid == uuid || target.isRemoved) {
@@ -994,7 +990,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
      * waterlogging, multi-block state and its own modded placement behavior.
      */
     override fun placeHeldBlock(placement: NpcBlockPlacement, hand: NpcHand): NpcActionResult {
-        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
+        handActionProblem(NpcActionChannel.BLOCK_ACTION)?.let { return it }
         val target = BlockPos(placement.position.x, placement.position.y, placement.position.z)
         // Bound reads here; useItemOnBlock still validates the actual support hit at normal reach.
         if (distanceToSqr(target.center) > PLACEMENT_PREFLIGHT_REACH_SQR) {
@@ -1034,8 +1030,9 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     }
 
     override fun useInteractiveBlock(position: NpcBlockPosition): NpcActionResult {
-        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
+        handActionProblem(NpcActionChannel.INTERACTION)?.let { return it }
         val blockPos = BlockPos(position.x, position.y, position.z)
+        NpcInteractionGeometry.visibleBlock(this, blockPos)?.let { return it }
         if (distanceToSqr(blockPos.center) > BLOCK_INTERACTION_REACH_SQR) {
             return NpcActionResult.rejected("block is out of interaction reach")
         }
@@ -1044,7 +1041,6 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         if (state.isAir) return NpcActionResult.rejected("block is air")
         val block = state.block
         if (block is net.minecraft.world.level.block.SweetBerryBushBlock) {
-            if (rangedController.isActive || blockBreakController.isActive || isUsingItem) return NpcActionResult.rejected("cancel conflicting hand actions before using a ripe bush",NpcActionCode.CONFLICT)
             return NpcBerryInteraction.use(this,blockPos,state)
         }
         when (block) {
@@ -1060,9 +1056,7 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     internal fun hasFishingHook(id: UUID): Boolean = fishingController.hasHook(id)
     override fun fishingState(): NpcFishingState? = fishingController.state()
     override fun castFishing(request: NpcFishingCast): NpcActionResult {
-        if (rangedController.isActive || blockBreakController.isActive || isUsingItem) {
-            return NpcActionResult.rejected("cancel conflicting hand actions before fishing", NpcActionCode.CONFLICT)
-        }
+        handActionProblem(request.hand.actionChannel())?.let { return it }
         return fishingController.start(request)
     }
     override fun continueFishing(actionId: UUID): NpcActionResult = fishingController.renew(actionId)
@@ -1070,12 +1064,13 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     override fun cancelFishing(): NpcActionResult = fishingController.cancel()
 
     override fun startItemUse(hand: NpcHand): NpcActionResult {
-        if (fishingController.isActive) return NpcActionResult.rejected("cancel fishing before another hand action", NpcActionCode.CONFLICT)
-        if (rangedController.isActive || blockBreakController.isActive) {
-            return NpcActionResult.rejected("cancel the conflicting ranged or block action before using an item", NpcActionCode.CONFLICT, hand.actionChannel())
-        }
+        handActionProblem(hand.actionChannel())?.let { return it }
         return itemUseController.start(hand)
     }
+
+    private fun handActionProblem(channel: NpcActionChannel): NpcActionResult? =
+        NpcMechanicalAdmission.problem(channel, blockBreakController.isActive, rangedController.isActive,
+            fishingController.isActive, isUsingItem || itemUseController.actionId != null || blockUseCallbackActive)
 
     override fun continueItemUse(): NpcActionResult {
         if (rangedController.isActive) return rangedController.continuation()
@@ -1135,14 +1130,10 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
     /** Apply caller-supplied local input through LivingEntity's normal collision-aware movement. */
     private fun submitDirectMovement(input: NpcControlInput) {
         if (abs(input.forward) <= CONTROL_INPUT_EPSILON && abs(input.strafe) <= CONTROL_INPUT_EPSILON) {
-            stopDirectMovement()
+            // No input is not zero velocity: vanilla friction must retain knockback and ice sliding.
             return
         }
         moveRelative(speed, Vec3(input.strafe.toDouble(), 0.0, input.forward.toDouble()))
-    }
-
-    private fun stopDirectMovement() {
-        deltaMovement = Vec3(0.0, deltaMovement.y, 0.0)
     }
 
     private fun expireControlIfNeeded() {
@@ -1156,7 +1147,6 @@ class SamcnpcEntity(type: EntityType<out SamcnpcEntity>, level: Level) : Mob(typ
         navigation.stop()
         setXxa(0.0F)
         setZza(0.0F)
-        stopDirectMovement()
         setSprinting(false)
         setShiftKeyDown(false)
         completeAction(

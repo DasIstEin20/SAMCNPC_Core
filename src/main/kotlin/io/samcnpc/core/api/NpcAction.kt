@@ -39,6 +39,8 @@ enum class NpcActionCode {
     CANCELLED,
     EXPIRED,
     NO_PROGRESS,
+    /** Foreign code may already have changed world/item state. Never blindly retry or roll it back. */
+    EFFECT_UNCERTAIN,
 }
 
 data class NpcActionResult(

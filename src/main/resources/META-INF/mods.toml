@@ -2,6 +2,10 @@ modLoader="kotlinforforge"
 loaderVersion="[4,)"
 license="MIT"
 
+[modproperties.samcnpc_core]
+apiVersion="2"
+buildId="${buildId}"
+
 [[mods]]
 modId="samcnpc_core"
 version="${version}"

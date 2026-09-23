@@ -107,27 +107,39 @@ object NpcCombatPermissionGameTests {
 
     @JvmStatic @GameTest(template = "samcnpccoregametests.empty", timeoutTicks = 90, batch = "ranged_permission_changes")
     fun teamPermissionIsRecheckedDuringAnActualRangedCharge(helper: GameTestHelper) {
-        val body = spawn(helper, 1.5)
-        val target = spawn(helper, 5.5)
+        // Keep the same four-block shot entirely inside the declared five-block arena.
+        val body = spawn(helper, 0.5)
+        val target = spawn(helper, 4.5)
         body.setInventoryStack(0, ItemStack(Items.BOW))
         body.setInventoryStack(9, ItemStack(Items.ARROW, 2))
         val started = body.startRangedAttack(target.uuid, NpcHand.MAIN)
-        check(started.status == NpcActionStatus.ACCEPTED)
+        check(started.status == NpcActionStatus.ACCEPTED) {
+            "Ranged permission fixture could not start charge: $started body=${body.position()} target=${target.position()} visible=${body.hasLineOfSight(target)}"
+        }
         val board = helper.level.scoreboard
         val team = board.addPlayerTeam("combat-${body.id}")
         team.isAllowFriendlyFire = false
         helper.runAfterDelay(5) {
-            check(body.snapshot().rangedAttack != null && body.snapshot().itemUse != null)
+            check(body.snapshot().rangedAttack != null && body.snapshot().itemUse != null) {
+                "Ranged charge ended before team change: ${body.snapshot().recentCompletions}"
+            }
             board.addPlayerToTeam(body.scoreboardName, team)
             board.addPlayerToTeam(target.scoreboardName, team)
-            check(body.worldView().observeEntity(target.uuid)?.combat?.permitted == false)
+            val facts = body.worldView().observeEntity(target.uuid)?.combat
+            check(facts?.permitted == false) { "Team denial was not observed: $facts" }
         }
         helper.runAfterDelay(30) {
             try {
-                check(body.snapshot().rangedAttack == null && body.snapshot().itemUse == null)
+                check(body.snapshot().rangedAttack == null && body.snapshot().itemUse == null) {
+                    "Charge did not stop after team denial: ${body.snapshot()}"
+                }
                 val result = body.snapshot().recentCompletions.single { it.result.actionId == started.actionId }.result
-                check(result.status == NpcActionStatus.FAILED && result.code == NpcActionCode.PERMISSION_DENIED)
-                check(body.mainHandItem.damageValue == 0 && body.menuInventoryStack(9).count == 2 && target.health == target.maxHealth)
+                check(result.status == NpcActionStatus.FAILED && result.code == NpcActionCode.PERMISSION_DENIED) {
+                    "Unexpected charge completion: $result"
+                }
+                check(body.mainHandItem.damageValue == 0 && body.menuInventoryStack(9).count == 2 && target.health == target.maxHealth) {
+                    "Denied charge changed resources: durability=${body.mainHandItem.damageValue} arrows=${body.menuInventoryStack(9).count} targetHealth=${target.health}"
+                }
                 team.isAllowFriendlyFire = true
                 val facts = checkNotNull(body.worldView().observeEntity(target.uuid)?.combat)
                 check(facts.permitted && facts.allied) { "mechanical permission was conflated with the ally fact" }
@@ -149,7 +161,7 @@ object NpcCombatPermissionGameTests {
     }
 
     private fun spawn(helper: GameTestHelper, x: Double): SamcnpcEntity {
-        for (dx in 0..8) for (z in 0..5) helper.setBlock(BlockPos(dx, 0, z), Blocks.STONE)
+        for (dx in 0..4) for (z in 0..4) helper.setBlock(BlockPos(dx, 0, z), Blocks.STONE)
         val body = checkNotNull(ModEntities.NPC.get().create(helper.level))
         val origin = helper.absolutePos(BlockPos.ZERO)
         body.moveTo(origin.x + x, origin.y + 1.0, origin.z + 2.5, -90.0F, 0.0F)
