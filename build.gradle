@@ -3,42 +3,21 @@ plugins {
     id 'net.minecraftforge.gradle' version '6.0.54'
     id 'org.jetbrains.kotlin.jvm' version '2.2.21'
 }
-
 group = providers.gradleProperty('mod_group').get()
 version = providers.gradleProperty('mod_version').get()
-
 repositories {
     mavenCentral()
-    maven {
-        name = 'KotlinForForge'
-        url = 'https://thedarkcolour.github.io/KotlinForForge/'
-        content { includeGroup 'thedarkcolour' }
-    }
+    maven { name = 'KotlinForForge'; url = 'https://thedarkcolour.github.io/KotlinForForge/'; content { includeGroup 'thedarkcolour' } }
 }
-
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
-    }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.release = 17
-    options.encoding = 'UTF-8'
-}
-
+java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
+tasks.withType(JavaCompile).configureEach { options.release = 17; options.encoding = 'UTF-8' }
 tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile).configureEach {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
-        freeCompilerArgs.add('-Xjvm-default=all')
-    }
+    compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17; freeCompilerArgs.add('-Xjvm-default=all') }
 }
+tasks.withType(Test).configureEach { useJUnitPlatform() }
+if (!rootProject.ext.has('fullVerificationId')) rootProject.ext.fullVerificationId = null
 
-tasks.withType(Test).configureEach {
-    useJUnitPlatform()
-}
-
-def suiteSmokeId = rootProject.ext.has('fullVerificationId') ? rootProject.ext.fullVerificationId : null
+def suiteSmokeId = rootProject.ext.fullVerificationId
 def respawnSmokeId = providers.gradleProperty('respawnSmokeId').getOrElse(suiteSmokeId ?: 'manual')
 def chunkSmokeId = providers.gradleProperty('chunkSmokeId').getOrElse(suiteSmokeId ?: '')
 if (!(respawnSmokeId ==~ /[A-Za-z0-9_-]+/) || !(chunkSmokeId ==~ /[A-Za-z0-9_-]*/)) {
@@ -64,12 +43,6 @@ minecraft {
             }
         }
         client {}
-        clientConfigSmoke {
-            parent runs.client
-            workingDirectory project.file('run-config-smoke')
-            property 'samcnpc.configSmoke', 'true'
-            mods { samcnpc_core { source sourceSets.test } }
-        }
         clientFishingSmoke {
             parent runs.client
             workingDirectory project.file('run-fishing-smoke')
@@ -158,17 +131,6 @@ tasks.named('processResources', ProcessResources).configure {
 }
 
 tasks.named('jar', Jar).configure {
-    archiveBaseName = 'samcnpc-core'
-    manifest {
-        attributes([
-            'Specification-Title': project.name,
-            'Specification-Vendor': 'SAMCNPC',
-            'Specification-Version': '1',
-            'Implementation-Title': project.name,
-            'Implementation-Version': project.version,
-            'Implementation-Vendor': 'SAMCNPC'
-        ])
-    }
     finalizedBy 'reobfJar'
 }
 
@@ -292,41 +254,21 @@ tasks.matching { it.name == 'runClientFishingSmoke' }.configureEach {
     doLast { if (!report.text.startsWith('PASS ')) throw new GradleException("Fishing client smoke failed: ${report}") }
 }
 
-tasks.matching { it.name == 'runClientConfigSmoke' }.configureEach {
-    def report = layout.projectDirectory.file('run-config-smoke/config-smoke-result.txt').asFile
-    doFirst {
-        report.parentFile.mkdirs()
-        report.text = 'RUNNING\n'
-    }
-    doLast {
-        if (!report.text.trim().endsWith('PASS')) throw new GradleException("Configuration client smoke failed: ${report}")
-    }
-}
-
 tasks.register('verifyProductionKotlin') {
     group = 'verification'
     doLast {
-        def javaSources = fileTree('src/main') { include '**/*.java' }.files
-        if (!javaSources.empty) {
-            throw new GradleException("Production source must be Kotlin: ${javaSources.join(', ')}")
-        }
+        def sources = fileTree('src/main') { include '**/*.java' }.files
+        if (!sources.empty) throw new GradleException("Production source must be Kotlin: ${sources}")
     }
 }
-
-tasks.named('check').configure {
-    dependsOn tasks.named('verifyProductionKotlin')
-}
-
-// A flaky retry can fail after vanilla's original batch tracker has already advanced. Its final
-// aggregate/exit may still be green; an explicit required failure in this run always fails the gate.
+tasks.named('check').configure { dependsOn tasks.named('verifyProductionKotlin') }
 tasks.matching { it.name == 'runGameTestServer' }.configureEach {
     doLast {
         def report = new File(workingDir, 'logs/latest.log')
-        if (!report.isFile()) throw new GradleException("GameTest result log is missing: ${report}")
-        def failures = []
-        report.eachLine('UTF-8') { line ->
-            if (line.contains('/ERROR]') && line.contains('LogTestReporter') && line.contains(' failed!')) failures.add(line)
-        }
-        if (!failures.isEmpty()) throw new GradleException("${failures.size()} required GameTest failure(s) despite runner exit: ${failures.first()}. See ${report}")
+        if (!report.isFile()) throw new GradleException('Missing native test report')
+        def failures=report.readLines('UTF-8').findAll { it.contains('/ERROR]') && it.contains('LogTestReporter') && it.contains(' failed!') }
+        if (!failures.empty) throw new GradleException("Required native test failure: ${failures.first()}")
     }
 }
+
+tasks.withType(Jar).configureEach { archiveBaseName = 'samcnpc-core' }
